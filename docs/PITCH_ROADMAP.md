@@ -248,6 +248,22 @@ demo device can never derail a live pitch. All of it lives in
       than the plain Exam-Rules-checklist bullet originally scoped — more
       convincing for a demo, per the same call as the ID-verification change above.
 
+## Milestone 5 — A real proctor feature (supersedes the mocked gate)
+
+**Scoped 2026-08-26, not started.** Reverses part of Milestone 4's "fully mocked, no
+real proctor" call — see `NEXT_PHASE_PLAN.md` (repo root) for the full breakdown, open
+questions, and suggested opening move for the session that builds this. Short version:
+real student-selected scheduling, a real `PROCTOR`-facing dashboard showing booked
+attempts, a real (polling-based, not WebSocket) wait-for-approval gate replacing the
+scripted "Waiting for proctor…" delay, and a new post-submission proctor-approval step
+before a student sees their result — likely built on `Submission.verifiedAt`, an
+existing schema field that's never been set by any code path yet.
+
+- [ ] Real scheduling (student picks a time, not just confirms one fixed window)
+- [ ] Proctor dashboard — booked/upcoming attempts, not just in-progress ones
+- [ ] Real wait-for-proctor-approval gate (replaces the scripted delay)
+- [ ] Post-submission proctor approval before the student sees their result
+
 ---
 
 ## Explicitly deferred (documented, not built, not simulated)

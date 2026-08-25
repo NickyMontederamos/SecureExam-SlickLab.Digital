@@ -1,0 +1,1490 @@
+from pathlib import Path
+from textwrap import dedent
+
+report = dedent(r"""
+# SecureExam | SlickLab.Digital
+# Research, Competitor Benchmark & Architecture Roadmap
+
+**Document:** `docs/RESEARCH_AND_ROADMAP.md`  
+**Research date:** 2026-08-26  
+**Status:** Research complete; repository-specific code audit is **partially blocked** because the SecureExam repository/source tree was not available in the connected workspace during this research run.
+
+---
+
+## 0. Executive Summary
+
+SecureExam should not try to become a literal clone of Examplify, Respondus, or Honorlock in one release. Those products solve different parts of the assessment stack:
+
+- **ExamSoft / Examplify** is strongest as a purpose-built secure assessment delivery platform: a native exam client, offline-first delivery, encrypted answer files, OS lockdown, identity verification, remote-proctoring capture, institutional review, tagging/outcomes, and psychometric reporting.
+- **Respondus LockDown Browser + Monitor** is strongest as an LMS-centric secure browser/proctoring layer. It locks down the local client while leaving the LMS/quiz engine as the assessment system of record. It integrates with major LMS platforms and now supports additional camera and monitoring capabilities.
+- **Honorlock** is strongest as a SaaS proctoring/security layer tightly integrated with LMSs. Its modern differentiation is hybrid AI + human review, BrowserGuard, device/cell-phone detection, live intervention, analytics, and broad LTI/API integration.
+
+### Strategic conclusion
+
+SecureExam should evolve as a **three-layer assessment platform**:
+
+```text
+┌────────────────────────────────────────────────────────────┐
+│  INSTITUTION / ADMINISTRATION                              │
+│  Tenants • RBAC • Governance • Accreditation • Audit       │
+├────────────────────────────────────────────────────────────┤
+│  ASSESSMENT CORE                                           │
+│  Exams • Question Banks • Tags • Attempts • Grading        │
+│  Psychometrics • Results • LMS/LTI Integration             │
+├────────────────────────────────────────────────────────────┤
+│  TRUST / SECURITY LAYER                                    │
+│  Browser controls • Event telemetry • Identity • Proctoring│
+│  Offline attempt journal • Integrity scoring • Audit trail │
+├────────────────────────────────────────────────────────────┤
+│  DELIVERY CLIENT                                            │
+│  Phase 1: Hardened Web PWA / browser                      │
+│  Phase 2: Windows native lockdown client                   │
+└────────────────────────────────────────────────────────────┘
+
+
+
+The immediate priority is not native OS hooks. The immediate priority is to make the web platform's exam state, attempt model, telemetry, audit trail, question-bank architecture, and offline synchronization mathematically and operationally correct.
+
+1. Research Scope and Evidence Standard
+
+This report uses:
+
+Current vendor documentation and support material from ExamSoft, Respondus, Honorlock, Instructure/Canvas, Moodle, and 1EdTech.
+Vendor case studies where they expose assessment/psychometric workflows.
+Product behavior documented by vendors.
+Architecture recommendations derived from the above.
+
+Where a vendor does not publicly disclose an internal implementation detail, this report does not invent it. Terms such as "encrypted", "offline", "AI", "live proctor", and "LTI 1.3" are used only where vendor documentation supports them.
+
+2. Competitor Benchmark
+2.1 ExamSoft / Examplify
+Delivery model
+
+Examplify is a native secure exam application rather than merely a browser page. ExamSoft documentation describes secure assessments that can lock down the exam-taker's computer, restrict access to other applications/files/network resources, log activity inside the application, and relaunch in secure mode after a system restart.
+
+Offline operation
+
+ExamSoft's current support documentation confirms that after exam completion Examplify secures, locks, and encrypts answers and attempts to reconnect to upload them. If internet is unavailable, the exam can still be completed and the answer file uploaded later when connectivity returns.
+
+ExamSoft's ExamMonitor materials describe an offline-capable proctoring workflow: audio/video can be recorded during the exam and uploaded after completion.
+
+Design implication for SecureExam: treat the exam attempt as a local transaction log, not a collection of UI state variables.
+
+Recommended model:
+
+Exam Package
+   ↓
+Encrypted Local Attempt
+   ↓
+Append-only Answer Events
+   ↓
+Checkpoint / Hash
+   ↓
+Finalization
+   ↓
+Encrypted Upload Queue
+   ↓
+Server Verification
+   ↓
+Immutable Attempt Record
+Encryption and upload
+
+ExamSoft documentation states that information transmitted to ExamSoft and monitoring data uploaded to its servers are encrypted. It also describes encrypted answer and audio/video files.
+
+SecureExam recommendation:
+
+TLS 1.3 where supported.
+Encrypt sensitive attempt artifacts at rest.
+Use envelope encryption with a KMS-managed data key.
+Never rely on localStorage as the sole storage location for authoritative answers.
+Maintain a server-side immutable attempt hash.
+Use idempotency keys for uploads.
+Keep upload state separate from exam completion state.
+Lockdown architecture
+
+Examplify uses a native client with operating-system-level controls. ExamSoft describes scanning system configuration, blocking access to external applications/files/hotkeys/network connections, detecting virtual machines, logging application activity, and relaunching in secure mode.
+
+This is substantially stronger than a normal browser application.
+
+Proctoring
+
+ExamMonitor is primarily a record-and-review workflow, not a conventional always-watching live proctor session. Current ExamSoft documentation says recorded audio/video is analyzed with AI for anomalies and then reviewed by institutional personnel. Incident categories include:
+
+missing applicant
+multiple persons
+suspicious objects
+speaking
+off-screen gaze
+hand gestures
+
+ExamSoft explicitly cautions that AI flags are not automatically equivalent to cheating; humans determine whether an academic-integrity breach occurred.
+
+Assessment authoring
+
+ExamSoft supports question-bank assessments and tagging of items to outcomes/competencies. Case studies describe tags such as educational outcomes, learning level, course objectives, and accreditation-related categories.
+
+Psychometrics
+
+ExamSoft documentation/case studies expose:
+
+point-biserial correlation
+discrimination index
+difficulty index
+distractor analysis
+question-level performance
+category/outcome performance
+
+This is a major benchmark for SecureExam.
+
+Governance
+
+ExamSoft supports institutional workflows around exam posting, exam-taker assignment, results release, exam integrity review, and institutional disposition.
+
+3. Respondus LockDown Browser + Monitor
+3.1 Architecture
+
+Respondus is fundamentally different from Examplify.
+
+The LMS remains central. LockDown Browser is a locally installed client that launches an LMS assessment in a controlled browser environment.
+
+Current Respondus documentation lists integrations with:
+
+Blackboard Learn
+D2L Brightspace
+Canvas
+Moodle
+Sakai
+Schoology
+
+Respondus also provides an OEM model that lets assessment vendors embed LockDown Browser capabilities into their own assessment systems.
+
+Security architecture
+
+LockDown Browser is a native installed client, not merely a JavaScript browser script.
+
+This matters because browser JavaScript cannot reliably enforce OS-level guarantees such as:
+
+preventing arbitrary applications from running
+preventing task switching
+enforcing single-application mode
+controlling system-level shortcuts
+preventing access to other desktop resources
+
+SecureExam's Phase 1 web product should therefore describe itself as browser-hardened / integrity-monitored, not as an equivalent to a native OS lockdown product.
+
+Reliability
+
+Respondus documentation says LMS auto-save can allow a student to resume after connectivity or browser problems, depending on the LMS.
+
+This is a different reliability model from Examplify:
+
+Examplify:
+Local secure exam package → local answer file → upload
+
+Respondus:
+LMS quiz engine → browser client → LMS auto-save
+
+SecureExam should combine the best parts:
+
+Local durable attempt journal
++
+Server-side checkpoints
++
+Offline queue
++
+Conflict-safe synchronization
+Monitor
+
+Respondus Monitor adds webcam-based proctoring and startup checks. Modern releases also support a second-camera option. In current documentation, instructors can review synchronized video streams including the primary webcam, second camera, and screen recording.
+
+LMS integration
+
+Respondus is deeply LMS-integrated and depends on LTI/external-tool integrations for configuration and launching.
+
+Authoring / question bank
+
+Respondus is not positioned as a complete replacement for every LMS's assessment authoring engine. Its Respondus 4.0 ecosystem supports importing/exporting assessment content and question-bank workflows.
+
+A legacy CSV specification exposes fields such as:
+
+Type
+Title/ID
+Points
+Question Wording
+Correct Answer
+Choices
+Topic
+Difficulty
+Metadata fields
+
+This is a useful compatibility benchmark for SecureExam's import/export layer.
+
+4. Honorlock
+4.1 Architecture
+
+Honorlock is primarily a cloud proctoring/security platform integrated with an LMS or third-party assessment.
+
+Its current product architecture emphasizes:
+
+AI monitoring
+live human review
+BrowserGuard
+screen recording
+webcam/audio capture
+identity verification
+room scans
+cell-phone/secondary-device detection
+AI-tool blocking
+web activity monitoring
+analytics/reporting
+24/7 support
+Modern proctoring model
+
+Honorlock's current differentiation is hybrid:
+
+AI detects anomaly
+       ↓
+Human proctor reviews context
+       ↓
+If warranted → live intervention
+       ↓
+Institution receives validated incident/report
+
+Honorlock calls its current intervention model Live Pop-In.
+
+This is important architecturally: an AI flag should be treated as a signal, not a verdict.
+
+Browser security
+
+Honorlock's BrowserGuard is designed to prevent/flag access to unauthorized sites and applications, keyboard shortcuts, and other prohibited behaviors while also recording the desktop.
+
+Again, this is stronger than ordinary browser JavaScript but is not identical to a fully native secure exam client.
+
+Offline / low bandwidth
+
+Honorlock's current material emphasizes support for unstable or low-bandwidth connections and states that candidates are not simply locked out because of minor connectivity problems.
+
+However, this should not be interpreted as proof of a full Examplify-style offline exam package. SecureExam should implement a genuine offline attempt journal rather than depend on proctoring-vendor behavior.
+
+LMS / LTI
+
+Honorlock's security documentation states support for LTI 1.3 integrations and REST APIs. Its documented LMS integrations include Canvas, Blackboard, Moodle, D2L, and others.
+
+For SecureExam, the important LTI Advantage components are:
+
+LTI 1.3 / OIDC launch
+Deep Linking
+Names and Role Provisioning Service (NRPS)
+Assignment and Grading Services (AGS)
+
+Canvas documentation confirms that NRPS can synchronize course rosters and that AGS can return scores to the LMS gradebook.
+
+5. Modern Online Assessment Benchmark
+5.1 Canvas
+
+Canvas New Quizzes exposes item-level statistics including:
+
+Item Difficulty
+Mean Earned Points
+Discrimination Index
+Corrected Item-Total Correlation
+Answer Frequency
+
+Canvas also supports item banks and LTI 1.3/LTI Advantage integration.
+
+SecureExam lesson
+
+Psychometrics should not be an afterthought.
+
+Every scored item should be able to accumulate statistical observations across attempts and exam forms.
+
+5.2 Moodle
+
+Moodle's quiz statistics expose:
+
+Facility Index
+Standard Deviation
+Random Guess Score
+Discrimination Index
+Discriminative Efficiency
+Intended Weight
+Effective Weight
+
+Moodle also surfaces question-bank statistics and can identify items needing review.
+
+SecureExam lesson
+
+Add a dedicated ItemAnalysis domain instead of calculating statistics ad hoc inside reporting routes.
+
+6. Competitor Feature Matrix
+Capability	Examplify / ExamSoft	Respondus LDB + Monitor	Honorlock	SecureExam Target
+Native secure client	Strong	Strong	Not primary	Phase 2
+Browser lockdown	Native client	Strong	BrowserGuard	Phase 1 hardened browser
+Full offline exam	Strong	LMS-dependent	Low-bandwidth focused	Strong
+Encrypted answer artifact	Strong	LMS-dependent	Platform-dependent	Strong
+Reconnection sync	Yes	LMS-dependent	Resilient session model	Strong
+Webcam	Yes	Yes	Yes	Phase 1
+Microphone	Yes	Yes	Yes	Phase 1
+Screen recording	Yes	Supported	Yes	Phase 1
+AI anomaly detection	Yes	Yes/Monitor workflow	Yes	Phase 1/2
+Live human proctor	Optional/service workflow	Monitoring workflow	Core differentiator	Phase 2 / service integration
+Real-time intervention	Limited relative to live-first systems	Proctor workflow	Strong	Phase 2
+Second camera	Device/platform dependent	Current feature	Supported options	Phase 2
+Identity verification	ExamID	Startup checks	ID verification	Phase 1
+Room scan	Proctoring workflow	Startup sequence	Yes	Phase 1
+Question banks	Strong	LMS/Respondus ecosystem	Not core	Strong
+Item tagging	Strong	Basic/import metadata	Not core	Strong
+Accreditation/outcome tags	Strong	LMS-dependent	Not core	Strong
+Psychometrics	Strong	LMS-dependent	Not core	Strong
+Point-biserial	Yes	Not core	Not core	Strong
+Difficulty	Yes	Metadata / LMS	Not core	Strong
+Discrimination	Yes	LMS-dependent	Not core	Strong
+LTI 1.3	Enterprise integration options	Deep LMS integration	Strong	Phase 1/2
+Canvas	Yes/enterprise	Yes	Yes	Phase 1 target
+Moodle	Enterprise integration ecosystem	Yes	Yes	Phase 1 target
+Blackboard	Enterprise ecosystem	Yes	Yes	Phase 1 target
+Immutable audit trail	Strong institutional workflow	LMS/admin logs	Strong reporting	Strong
+Multi-tenant SaaS	Yes	Partner/institution model	Yes	Required
+Native Windows OS hooks	Yes	Yes	Limited	Phase 2
+Question import	Yes	Strong	LMS-dependent	CSV/JSON/QTI
+Exam analytics	Strong	LMS-dependent	Proctoring-centric	Strong
+7. SecureExam Gap Analysis
+Important audit limitation
+
+The requested local repository audit could not be completed against the actual SecureExam codebase because the repository containing prisma/schema.prisma, route handlers, server actions, RBAC configuration, and architecture documents was not available in the connected GitHub repositories or local workspace during this run.
+
+Therefore:
+
+No claim is made about the current implementation of schema.prisma.
+No claim is made about existing route handlers.
+No claim is made about current RBAC enforcement.
+No claim is made about whether localStorage or IndexedDB is already implemented.
+No claim is made about current anti-cheat counters or force-submit logic.
+
+The following is a targeted audit checklist and architecture gap specification, to apply immediately when the repository is supplied.
+
+8. Code Audit Checklist
+8.1 Multi-tenant isolation
+
+Verify every tenant-owned entity has an explicit tenant boundary.
+
+Preferred pattern:
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+
+  users     User[]
+  exams     Exam[]
+  questions Question[]
+}
+
+model Exam {
+  id        String @id @default(cuid())
+  tenantId  String
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+
+  title     String
+  status    ExamStatus
+}
+
+Then enforce tenant scoping at the service/repository layer.
+
+Do NOT rely on the UI to prevent cross-tenant access.
+
+Required tests
+Student from Tenant A cannot read Tenant B exam.
+Instructor from Tenant A cannot mutate Tenant B question bank.
+Admin from Tenant A cannot access Tenant B audit logs.
+Attempt IDs cannot be used as an authorization bypass.
+File/object storage keys contain tenant isolation.
+9. Anti-Cheat Telemetry Architecture
+
+Do not store only:
+
+blurCount
+focusCount
+warningCount
+
+Instead create an append-only event stream:
+
+AttemptEvent
+├── attemptId
+├── tenantId
+├── eventType
+├── occurredAt
+├── clientSequence
+├── serverSequence
+├── monotonicTime
+├── payload
+├── severity
+├── source
+└── hash
+
+Example event types:
+
+WINDOW_BLUR
+WINDOW_FOCUS
+VISIBILITY_HIDDEN
+VISIBILITY_VISIBLE
+FULLSCREEN_EXIT
+COPY_ATTEMPT
+PASTE_ATTEMPT
+PRINT_ATTEMPT
+SHORTCUT_BLOCKED
+DEVTOOLS_SIGNAL
+SECONDARY_DISPLAY_SIGNAL
+NETWORK_OFFLINE
+NETWORK_ONLINE
+CAMERA_PERMISSION
+MIC_PERMISSION
+CAMERA_LOST
+MIC_LOST
+ANSWER_CHANGED
+QUESTION_NAVIGATION
+WARNING_ISSUED
+FORCE_SUBMIT
+SESSION_RESUMED
+
+The UI warning counter should be a derived value, not the authoritative audit record.
+
+10. Exam State Machine
+
+SecureExam needs a formal state machine.
+
+Recommended states:
+
+DRAFT
+  ↓
+SCHEDULED
+  ↓
+AVAILABLE
+  ↓
+STARTING
+  ↓
+ACTIVE
+  ├── OFFLINE
+  ├── PAUSED
+  ├── PROCTOR_REVIEW
+  ↓
+SUBMITTING
+  ↓
+FINALIZED
+  ↓
+SYNC_PENDING
+  ↓
+SYNCED
+  ↓
+GRADED
+  ↓
+RELEASED
+
+Terminal states should be immutable.
+
+Every transition should produce an audit event.
+
+Example:
+
+ACTIVE → SUBMITTING
+actor = STUDENT
+reason = USER_SUBMIT
+serverTime = ...
+attemptHash = ...
+11. Offline Exam Architecture
+Do not use localStorage for authoritative exam answers
+
+localStorage is useful for small preferences and non-sensitive UI state.
+
+For exam answers use:
+
+IndexedDB
+
+Recommended local structure:
+
+SecureExamDB
+├── examPackage
+├── attempt
+├── answers
+├── events
+├── syncQueue
+├── mediaManifest
+└── checkpoints
+
+Each answer mutation becomes an event:
+
+{
+  "attemptId": "A123",
+  "questionId": "Q77",
+  "sequence": 1042,
+  "answer": "...",
+  "clientTimestamp": "...",
+  "previousHash": "...",
+  "hash": "..."
+}
+
+The server can reconstruct the attempt.
+
+This is substantially more resilient than repeatedly overwriting a JSON object.
+
+12. Synchronization Strategy
+
+Use an idempotent append-and-ack protocol.
+
+Client:
+
+POST /attempts/:id/events
+Idempotency-Key: attemptId:clientSequence
+
+Server:
+
+Validate authentication.
+Validate tenant.
+Validate attempt state.
+Validate sequence.
+Store event.
+Verify hash chain.
+ACK sequence.
+Update materialized attempt state.
+
+Client then removes acknowledged events from the pending queue.
+
+Conflict handling
+
+Do not use naive last-write-wins for answers.
+
+Instead:
+
+Attempt
+ ├── event sequence 100
+ ├── event sequence 101
+ ├── event sequence 102
+ └── ...
+
+The sequence is authoritative.
+
+13. Question Import Architecture
+
+SecureExam should support at minimum:
+
+JSON
+{
+  "externalId": "LAW-CIV-001",
+  "type": "MULTIPLE_CHOICE",
+  "stem": "Question...",
+  "choices": [
+    {"id": "A", "text": "..."},
+    {"id": "B", "text": "..."}
+  ],
+  "correctAnswer": ["B"],
+  "points": 1,
+  "difficulty": 0.65,
+  "tags": [
+    "Civil Law",
+    "Contracts",
+    "Outcome-03"
+  ]
+}
+CSV
+
+Support:
+
+external_id
+type
+stem
+choice_a
+choice_b
+choice_c
+choice_d
+correct_answer
+points
+difficulty
+topic
+learning_objective
+course_outcome
+accreditation_code
+Future
+
+Add QTI 2.x/3.x compatibility where practical.
+
+This becomes important for LMS interoperability.
+
+14. Recommended Question-Bank Hierarchy
+Tenant
+└── Program
+    └── Course
+        └── QuestionBank
+            ├── Category
+            ├── Topic
+            ├── LearningOutcome
+            ├── AccreditationStandard
+            └── Question
+                ├── Version
+                ├── Choice
+                ├── Tag
+                └── ItemAnalysis
+
+Questions should be versioned.
+
+Do not mutate the historical question used in an already-submitted exam.
+
+15. Psychometric Engine
+
+Add an asynchronous analytics job.
+
+For each item:
+
+attemptCount
+correctCount
+facilityIndex
+meanScore
+standardDeviation
+discriminationIndex
+pointBiserial
+distractorStats
+effectiveWeight
+revisionStatus
+Difficulty / facility
+
+For binary MCQ scoring:
+
+facilityIndex = correctResponses / validResponses
+
+Higher means easier.
+
+Point-biserial
+
+Compute correlation between item score and total test score, preferably using the total score excluding the item when appropriate for the chosen statistical method.
+
+Discrimination
+
+Implement at least:
+
+corrected item-total correlation
+upper/lower group discrimination
+point-biserial
+
+Do not automatically delete or invalidate an item solely because a metric is weak. ExamSoft and Moodle both emphasize contextual interpretation.
+
+16. Recommended Prisma Data Model Additions
+
+The exact existing schema must be reviewed before applying migrations. These are domain additions, not a claim that they should be copied verbatim.
+
+enum AttemptStatus {
+  CREATED
+  ACTIVE
+  PAUSED
+  OFFLINE
+  SUBMITTING
+  FINALIZED
+  SYNC_PENDING
+  SYNCED
+  GRADED
+  RELEASED
+  INVALIDATED
+}
+
+enum ExamEventType {
+  START
+  ANSWER_CHANGED
+  QUESTION_VIEWED
+  WINDOW_BLUR
+  WINDOW_FOCUS
+  VISIBILITY_HIDDEN
+  VISIBILITY_VISIBLE
+  FULLSCREEN_ENTER
+  FULLSCREEN_EXIT
+  COPY_ATTEMPT
+  PASTE_ATTEMPT
+  PRINT_ATTEMPT
+  SHORTCUT_BLOCKED
+  NETWORK_OFFLINE
+  NETWORK_ONLINE
+  CAMERA_LOST
+  MICROPHONE_LOST
+  WARNING_ISSUED
+  FORCE_SUBMIT
+  SUBMIT
+  RESUME
+}
+
+model Attempt {
+  id              String        @id @default(cuid())
+  tenantId        String
+  examId          String
+  studentId       String
+  status          AttemptStatus @default(CREATED)
+
+  startedAt       DateTime?
+  submittedAt     DateTime?
+  finalizedAt     DateTime?
+
+  lastClientSeq   Int           @default(0)
+  lastServerSeq   Int           @default(0)
+  finalHash       String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  events          AttemptEvent[]
+  answers         AttemptAnswer[]
+
+  @@index([tenantId, examId])
+  @@index([tenantId, studentId])
+}
+
+model AttemptEvent {
+  id             String        @id @default(cuid())
+  tenantId       String
+  attemptId      String
+  type           ExamEventType
+
+  clientSequence Int
+  serverSequence Int?
+
+  occurredAt     DateTime
+  receivedAt     DateTime      @default(now())
+
+  payload        Json?
+  previousHash   String?
+  eventHash      String?
+
+  attempt        Attempt       @relation(fields: [attemptId], references: [id])
+
+  @@unique([attemptId, clientSequence])
+  @@index([tenantId, attemptId, occurredAt])
+}
+
+model AttemptAnswer {
+  id             String   @id @default(cuid())
+  tenantId       String
+  attemptId      String
+  questionId     String
+
+  value          Json?
+  firstSeenAt    DateTime?
+  lastChangedAt  DateTime?
+  sequence       Int
+
+  attempt        Attempt  @relation(fields: [attemptId], references: [id])
+
+  @@unique([attemptId, questionId])
+  @@index([tenantId, questionId])
+}
+
+Then add separate domains for:
+
+QuestionTag
+LearningOutcome
+AccreditationStandard
+QuestionVersion
+ItemAnalysis
+LmsIntegration
+LtiDeployment
+ExamForm
+ExamFormQuestion
+ProctorSession
+ProctorEvent
+AuditLog
+17. LMS / LTI Data Model
+
+Recommended entities:
+
+LtiPlatform
+LtiDeployment
+LtiCourse
+LtiUser
+LtiResourceLink
+LtiLineItem
+LtiNonce / State
+
+Store secrets encrypted.
+
+Never store client secrets as plaintext in application logs.
+
+Recommended integration fields:
+
+platformIssuer
+clientId
+deploymentId
+authorizationEndpoint
+tokenEndpoint
+jwksUrl
+scopes
+encryptedClientSecret
+18. RBAC Model
+
+Avoid a single:
+
+role = ADMIN
+
+model.
+
+Use tenant-scoped roles/permissions.
+
+Recommended:
+
+SUPER_ADMIN
+TENANT_ADMIN
+ASSESSMENT_ADMIN
+INSTRUCTOR
+QUESTION_AUTHOR
+PROCTOR
+REVIEWER
+STUDENT
+AUDITOR
+
+And permissions:
+
+exam:create
+exam:publish
+exam:grade
+exam:release
+question:create
+question:approve
+question:publish
+attempt:view
+attempt:review
+proctor:review
+audit:view
+tenant:manage
+lti:manage
+
+A person may have different roles in different tenants.
+
+19. Phase 1 — Web/Cloud SaaS
+Priority P0
+P0.1 Attempt state machine
+
+Build the formal state machine before adding more anti-cheat features.
+
+P0.2 Append-only event telemetry
+
+Replace "counter-only" security logic with event records.
+
+P0.3 Offline attempt journal
+
+IndexedDB + service worker + sync queue.
+
+P0.4 Idempotent synchronization
+
+Every client event must be replay-safe.
+
+P0.5 Immutable finalization
+
+When submitted, create a final attempt hash and immutable submission snapshot.
+
+P0.6 Tenant isolation
+
+Audit every query and server action.
+
+P0.7 Question versioning
+
+Never alter historical exam content.
+
+P0.8 Audit log
+
+Security and governance events must be reviewable.
+
+20. Phase 1 — P1
+
+Implement:
+
+Fullscreen enforcement
+Visibility/focus telemetry
+Copy/paste/print controls
+Keyboard shortcut detection
+Multiple-monitor heuristics
+Webcam/microphone readiness checks
+Screen recording where browser/platform permits
+Identity verification
+Room scan workflow
+Proctor dashboard
+Real-time attempt status
+Student warning system
+Configurable integrity policies
+
+Important: web controls should be treated as signals and deterrents, not equivalent to OS-level enforcement.
+
+21. Phase 1 — Assessment Intelligence
+
+Build:
+
+Question bank.
+Categories.
+Tags.
+Learning outcomes.
+Accreditation mapping.
+Question versions.
+Exam forms.
+Randomization.
+Item pools.
+Import/export.
+Rubrics.
+Automatic grading.
+Manual grading.
+Regrade.
+Result release policies.
+Item analysis.
+Exam analytics.
+22. Phase 2 — Native Windows Lockdown Client
+Recommended direction
+
+For Windows, evaluate:
+
+Tauri
+
+Advantages:
+
+Smaller footprint.
+Rust security boundary.
+Native application shell.
+Good separation between web UI and native capabilities.
+Electron
+
+Advantages:
+
+Mature Chromium runtime.
+Large ecosystem.
+Easier web-team adoption.
+Strong auto-update ecosystem.
+
+Disadvantages:
+
+Larger footprint.
+More attack surface.
+More care required around Node/native bridges.
+Recommendation
+
+Prototype with Tauri if the engineering team can maintain Rust/native code.
+
+Choose Electron if rapid iteration and broad JavaScript expertise outweigh footprint concerns.
+
+23. Native Client Security Architecture
+
+Do not make the native client a giant privileged application.
+
+Use:
+
+UI Web Layer
+     ↓
+Minimal Native Bridge
+     ↓
+Security Service
+     ↓
+OS APIs
+
+The bridge should expose only narrowly defined capabilities:
+
+getSystemInfo()
+checkVirtualization()
+getDisplayTopology()
+enterKioskMode()
+exitKioskMode()
+blockSystemShortcuts()
+getRunningApplications()
+captureScreen()
+getCameraStatus()
+getMicrophoneStatus()
+
+The server remains authoritative.
+
+Never trust:
+
+isLocked = true
+
+because the client can be modified.
+
+Instead collect evidence:
+
+lockdownVersion
+deviceAttestation
+clientSignature
+heartbeat
+securityEvents
+tamperSignals
+24. Native Client Trust Model
+
+Use a zero-trust assumption:
+
+Client is potentially compromised.
+        ↓
+Server validates all claims.
+        ↓
+Client provides telemetry/evidence.
+        ↓
+Risk engine evaluates evidence.
+
+This prevents SecureExam from turning into a "security theater" application where the UI says "secure" while the server has no verifiable evidence.
+
+25. Proctoring Architecture
+
+Recommended:
+
+Student Client
+    │
+    ├── webcam
+    ├── microphone
+    ├── screen
+    └── event telemetry
+           │
+           ▼
+      Media Gateway
+           │
+           ├── encrypted media
+           ├── event stream
+           └── session state
+                   │
+                   ▼
+             Proctor Engine
+                   │
+           ┌───────┴────────┐
+           ▼                ▼
+       AI Signals       Human Review
+           │                │
+           └───────┬────────┘
+                   ▼
+             Integrity Case
+                   │
+                   ▼
+             Institution
+
+Do not let AI directly assign "CHEATING".
+
+Use:
+
+OBSERVED
+↓
+SUSPICIOUS
+↓
+REVIEW_REQUIRED
+↓
+CONFIRMED / DISMISSED
+
+This matches the more defensible pattern used by major vendors.
+
+26. Real-Time Proctor Controls
+
+Recommended controls:
+
+VIEW ATTEMPT
+SEND MESSAGE
+ISSUE WARNING
+REQUEST CAMERA CHECK
+REQUEST ROOM SCAN
+PAUSE ATTEMPT
+RESUME ATTEMPT
+FLAG INCIDENT
+ESCALATE
+FORCE SUBMIT
+END SESSION
+
+Every control becomes an audit event.
+
+27. Governance and Academic Integrity
+
+SecureExam should have an explicit distinction between:
+
+Technical event
+
+Example:
+
+WINDOW_BLUR
+
+and:
+
+Integrity finding
+
+Example:
+
+CONFIRMED_BREACH
+
+This distinction is essential.
+
+A student losing focus because of an operating-system notification is not automatically academic misconduct.
+
+28. Recommended Integrity Risk Engine
+
+Example:
+
+Risk Signals
+
+Window blur             +5
+Fullscreen exit         +10
+Copy attempt             +8
+Second person detected  +30
+Phone detected          +30
+Camera unavailable      +10
+Unauthorized site       +20
+AI-tool detection       +25
+Multiple signals        +bonus
+Approved accommodation  -risk modifier
+
+But these numbers should be configurable and institution-specific.
+
+Never make the risk score itself the final disciplinary decision.
+
+29. Institutional Workflow
+
+Recommended workflow:
+
+Institution Created
+       ↓
+Tenant Configuration
+       ↓
+Users / Roles
+       ↓
+Programs / Courses
+       ↓
+Question Banks
+       ↓
+Questions + Tags
+       ↓
+Exam Form
+       ↓
+Approval
+       ↓
+Schedule
+       ↓
+Student Assignment
+       ↓
+Exam Attempt
+       ↓
+Proctoring / Integrity
+       ↓
+Submission
+       ↓
+Grading
+       ↓
+Item Analysis
+       ↓
+Results Review
+       ↓
+Release
+       ↓
+Accreditation / Outcome Reports
+
+Add approval gates for high-stakes exams:
+
+DRAFT → AUTHOR_REVIEW → SECURITY_REVIEW → APPROVED → PUBLISHED
+30. Immediate Build Order
+Sprint 1 — Integrity Core
+ Formal attempt state machine
+ Attempt event table
+ Append-only event ingestion
+ Tenant isolation audit
+ Server authorization audit
+ Attempt finalization hash
+Sprint 2 — Offline Reliability
+ IndexedDB attempt store
+ Service worker
+ Offline detection
+ Event queue
+ Retry/backoff
+ Idempotent event API
+ Reconnect synchronization
+ Conflict detection
+Sprint 3 — Assessment Core
+ Question versioning
+ Question bank hierarchy
+ Tags
+ Learning outcomes
+ Accreditation tags
+ Exam forms
+ Randomization
+ Import/export
+Sprint 4 — Analytics
+ Item difficulty/facility
+ Point-biserial
+ Discrimination
+ Distractor analysis
+ Exam reliability metrics
+ Category/outcome analytics
+Sprint 5 — Proctoring
+ Webcam
+ Microphone
+ Screen capture
+ Identity verification
+ Room scan
+ Proctor dashboard
+ Integrity cases
+Sprint 6 — LMS
+ LTI 1.3
+ OIDC launch
+ NRPS
+ Deep Linking
+ AGS
+ Canvas
+ Moodle
+ Blackboard
+31. Architecture Decision: What NOT to Build Yet
+
+Do not build these first:
+
+Kernel drivers.
+Antivirus-like process termination.
+Custom operating-system shell.
+Full live-proctoring call center.
+AI cheating verdict engine.
+Complex native anti-VM bypass logic.
+Massive video infrastructure from scratch.
+Custom LMS replacement before assessment core is stable.
+
+These are expensive and create a huge operational/security burden.
+
+32. Recommended Competitive Positioning
+
+SecureExam should not initially market itself as:
+
+"Examplify but cheaper."
+
+Instead:
+
+"A customizable secure assessment platform for institutions that need control over exams, question banks, academic integrity, analytics, and LMS interoperability."
+
+Potential differentiators:
+
+1. Customizable governance
+
+Institution-specific roles, policies, approval workflows, and retention.
+
+2. Strong offline reliability
+
+A real offline attempt journal rather than merely a browser retry.
+
+3. Open interoperability
+
+LTI 1.3 + QTI + APIs.
+
+4. Assessment intelligence
+
+Psychometrics built into the platform rather than bolted on.
+
+5. Transparent integrity
+
+Evidence → review → decision instead of "AI says cheating."
+
+6. Buyer-controlled deployment
+
+Cloud SaaS first, optional private deployment later.
+
+33. Target Architecture
+                         ┌─────────────────────┐
+                         │ Institution Admin   │
+                         └──────────┬──────────┘
+                                    │
+                    ┌───────────────▼────────────────┐
+                    │ SecureExam Control Plane       │
+                    │ Multi-tenant • RBAC • Audit    │
+                    └───────────────┬────────────────┘
+                                    │
+             ┌──────────────────────┼─────────────────────┐
+             │                      │                     │
+             ▼                      ▼                     ▼
+       Assessment Core        Integrity Core         LMS Gateway
+       Exams                  Events                 LTI 1.3
+       Questions              Risk signals           Canvas
+       Forms                  Proctor sessions       Moodle
+       Grading                Cases                  Blackboard
+             │                      │                     │
+             └──────────────────────┼─────────────────────┘
+                                    │
+                              Student Client
+                                    │
+                    ┌───────────────┴────────────────┐
+                    │                                │
+              Phase 1 Web                    Phase 2 Native
+              PWA / Browser                  Windows Client
+                    │                                │
+              IndexedDB                       OS controls
+              Offline queue                   Attestation
+              Telemetry                       Secure capture
+34. Security Principles
+Server authoritative.
+Client untrusted.
+Tenant isolation everywhere.
+Least privilege.
+Immutable audit trail.
+Encryption in transit and at rest.
+Key management separated from application code.
+No secrets in browser bundles.
+No sensitive answers in ordinary browser storage unless encrypted and explicitly justified.
+Idempotent synchronization.
+Version all exam content.
+Never treat an AI flag as a disciplinary verdict.
+Preserve evidence needed for institutional review.
+Design accessibility and accommodations as first-class features.
+Maintain explicit data retention/deletion policies.
+35. Recommended KPIs
+Reliability
+Exam crash rate
+Submission success rate
+Offline recovery rate
+Sync failure rate
+Median sync recovery time
+Lost-answer incidents
+Security
+Unauthorized access attempts
+Cross-tenant authorization failures
+Integrity event rate
+Confirmed breach rate
+False-positive rate
+Camera/mic failure rate
+Assessment quality
+Mean item difficulty
+Point-biserial distribution
+Discrimination distribution
+Distractor effectiveness
+Question revision rate
+Exam reliability
+Operations
+Proctor response time
+Instructor review time
+Exam creation time
+Question import failure rate
+LMS launch failure rate
+36. Final Roadmap
+NOW
+│
+├── Harden database isolation
+├── Formalize attempt lifecycle
+├── Build append-only telemetry
+├── Build offline IndexedDB journal
+├── Build deterministic sync
+├── Version questions
+│
+▼
+PHASE 1
+│
+├── Assessment engine
+├── Question banks
+├── Tags/outcomes/accreditation
+├── Psychometrics
+├── Basic proctoring
+├── Integrity review
+├── LTI 1.3
+│
+▼
+PHASE 1.5
+│
+├── Canvas
+├── Moodle
+├── Blackboard
+├── QTI
+├── Analytics
+├── Governance
+│
+▼
+PHASE 2
+│
+├── Native Windows client
+├── OS lockdown
+├── Secure capture
+├── Device posture
+├── Attestation
+├── Stronger anti-tamper controls
+│
+▼
+PHASE 3
+│
+├── Hybrid AI + human proctoring
+├── Advanced anomaly detection
+├── Secondary-device detection
+├── Integrity graph
+├── Advanced psychometrics
+└── Enterprise/private deployment
+37. Bottom-Line Recommendation
+
+The fastest route to a serious SecureExam product is:
+
+Do not start by trying to beat Examplify at OS lockdown.
+
+First beat it at:
+
+customization,
+reliability,
+assessment architecture,
+question-bank intelligence,
+institutional governance,
+interoperability,
+transparent integrity workflows.
+
+Then build the native Windows client once the web/cloud assessment core is mature.
+
+The architectural insight from the benchmark is simple:
+
+Exam security is not one feature. It is a chain of trust.
+
+Identity
+   ↓
+Authorized Exam
+   ↓
+Trusted Attempt
+   ↓
+Durable Answers
+   ↓
+Verifiable Events
+   ↓
+Secure Submission
+   ↓
+Human-Reviewable Integrity Evidence
+   ↓
+Defensible Grade
+
+If any link is weak, the system is weak.
+
+SecureExam should therefore be engineered as an assessment integrity platform, not merely an online quiz application with a fullscreen button.
+
+38. Sources / Research Trail
+
+Primary product/vendor sources reviewed include:
+
+ExamSoft support documentation for Examplify submission, security options, ExamID/ExamMonitor, and Exam Integrity.
+ExamSoft case studies and psychometric-analysis materials.
+Respondus support documentation for LockDown Browser, Monitor, LMS integrations, OEM deployment, webcam/second-camera workflows, and reliability.
+Honorlock product/security documentation, Canvas integration guides, Live Pop-In materials, and current proctoring/security pages.
+Instructure Canvas developer documentation for LTI 1.3, Deep Linking, NRPS, and AGS.
+Canvas New Quizzes item-analysis documentation.
+Moodle documentation for quiz statistics, facility index, discrimination, and question-bank statistics.
+1EdTech LTI Advantage standards material.
+Evidence notes
+ExamSoft explicitly documents encrypted answer handling, offline-capable exam completion/proctoring workflows, native lockdown, and AI-assisted human review.
+Respondus explicitly documents its installed client architecture and LMS integrations.
+Honorlock explicitly documents LTI 1.3, REST APIs, AI + live-proctor workflows, BrowserGuard, device detection, and low-bandwidth considerations.
+Canvas and Moodle provide useful benchmarks for modern assessment analytics and psychometrics.
+39. Repository Audit Required for Implementation
+
+Before making Prisma migrations or rewriting security routes, obtain the current SecureExam repository and audit:
+
+prisma/schema.prisma
+src/
+app/
+pages/
+routes/
+server/
+actions/
+middleware/
+auth/
+rbac/
+components/
+lib/
+services/
+workers/
+docs/
+tests/
+package.json
+
+The next audit should produce:
+
+Current architecture map.
+Exact Prisma schema gap analysis.
+Route authorization matrix.
+RBAC privilege matrix.
+Attempt lifecycle state diagram.
+Existing anti-cheat event inventory.
+Offline persistence inventory.
+Question import/grading inventory.
+Tenant-isolation test matrix.
+Concrete migration plan with backward compatibility.
+
+Do not apply the illustrative Prisma models in this document blindly. Merge them into the actual schema after the repository-specific audit.

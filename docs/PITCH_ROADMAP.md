@@ -6,6 +6,11 @@ dev build), a firsthand student account of a real secure-exam app's UX (via a
 practicing attorney), and the anti-cheat consequence model. Supersedes the
 open questions in `NEXT_PHASE_PLAN.md` and `LACKING.txt` for anything they overlap on.
 
+**See `docs/LIVE_TEST_REPORT.md`** for a fully screenshotted walkthrough of everything
+through Milestone 2 (booking, the exam-taking UI, the 3-strike anti-cheat core, and
+both faculty review outcomes) — 29 real screenshots from an actual run against the dev
+server, not mockups.
+
 ## Why this plan exists, and what it deliberately isn't
 
 This is **not** a race to Examplify feature parity. `docs/ARCHITECTURE_DECISIONS.md`

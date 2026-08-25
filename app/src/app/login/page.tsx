@@ -79,6 +79,15 @@ export default async function LoginPage({
       <p className="text-center text-xs text-gray-400">
         Phase 1 demo — sign in with a seeded account.
       </p>
+      <div className="flex items-center justify-center gap-2 border-t pt-4 opacity-70">
+        <Image
+          src="/branding/slicklab-digital-watermark.png"
+          alt="SlickLab.Digital"
+          width={20}
+          height={20}
+        />
+        <span className="text-xs text-gray-400">Built by SlickLab.Digital</span>
+      </div>
     </main>
   );
 }

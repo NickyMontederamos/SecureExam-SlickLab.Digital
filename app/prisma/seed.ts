@@ -13,8 +13,8 @@ async function main() {
   const db = forPlatform();
 
   const branding = {
-    logoUrl: "/branding/college-of-law-logo.jpg",
-    sealUrl: "/branding/college-of-maasin-logo.jpg",
+    logoUrl: "/branding/college-of-law-logo.png",
+    sealUrl: "/branding/college-of-maasin-logo.png",
     // Sampled from the provided institution logos.
     primaryColor: "#6B2A8C",
     secondaryColor: "#1F6F4A",

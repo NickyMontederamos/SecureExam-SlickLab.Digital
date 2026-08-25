@@ -37,3 +37,22 @@ Not applicable (workflow, not code). Documented here so it isn't re-discovered a
 
 ### Status
 RESOLVED (as a process discipline, not a code change) — see `docs/ARCHITECTURE.md`'s local development section.
+
+---
+
+## ERROR-003
+
+### Symptom
+The new Playwright E2E golden-path test's second test (student takes the exam) failed with `Test timeout of 30000ms exceeded` waiting for the exam to appear in the student's exam list. The first test (faculty authors + publishes) reported "ok."
+
+### Root Cause
+The test clicked "Add to exam" then immediately "Publish exam" with no wait in between. Querying Postgres directly after a failing run showed the exam existed with the right title but `status: DRAFT` — the publish never actually succeeded, despite the test's own `expect(getByText("PUBLISHED")).toBeVisible()` assertion appearing to pass. The add-question server action's re-render hadn't landed yet when publish fired, so `publishExam()` was called against a still-zero-question view. This is a test-authoring bug (racing ahead of an async UI update), not an application bug — `publishExam()` already refuses to publish an empty exam, and that guarantee is covered by `exams.test.ts` and held throughout.
+
+### Fix
+Added `await expect(page.getByText("Questions (1)")).toBeVisible()` between the "Add to exam" click and the "Publish exam" click, so the test waits for the actual UI evidence that the question was attached before proceeding. Also tightened the post-publish assertion to `{ exact: true }` to remove any ambiguity about what "PUBLISHED" text was being matched.
+
+### Regression Test
+This *is* a regression test — `tests/e2e/exam-lifecycle.spec.ts` now passes reliably (verified 2/2 on the fixed version) after previously producing three orphaned DRAFT exams across repeated runs before the root cause was found.
+
+### Status
+RESOLVED

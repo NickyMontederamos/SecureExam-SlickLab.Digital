@@ -89,9 +89,24 @@ export function forTenant(institutionId: string) {
             return query(args);
           }
 
+          if (operation === "upsert") {
+            // Same reasoning as create/update combined: the lookup (where)
+            // gets institutionId merged in (extended-where-unique, same as
+            // update/delete), and the create branch gets institutionId
+            // forced/validated the same way as a plain create. The update
+            // branch is left alone — it can never change institutionId.
+            const createInstitutionId = args.create?.institutionId;
+            if (createInstitutionId !== undefined && createInstitutionId !== institutionId) {
+              throw new CrossTenantAccessError(`${model}.upsert with mismatched institutionId`);
+            }
+            args.where = { ...(args.where ?? {}), institutionId };
+            args.create = { ...(args.create ?? {}), institutionId };
+            return query(args);
+          }
+
           // Any operation not explicitly handled above (aggregate, groupBy,
-          // upsert, createMany, ...) is refused rather than silently
-          // unscoped. Add explicit handling above before using it.
+          // createMany, ...) is refused rather than silently unscoped. Add
+          // explicit handling above before using it.
           throw new CrossTenantAccessError(`${model}.${operation} is not tenant-scoping-aware yet`);
         },
       },

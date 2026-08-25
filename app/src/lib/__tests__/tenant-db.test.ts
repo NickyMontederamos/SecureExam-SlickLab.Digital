@@ -122,4 +122,45 @@ describe("tenant isolation (forTenant)", () => {
 
     await forPlatform().course.delete({ where: { id: created.id } });
   });
+
+  it("upsert scoped to tenant A updates its own existing course in place", async () => {
+    const asTenantA = forTenant(institutionA.id);
+    const updated = await asTenantA.course.upsert({
+      where: { institutionId_code_academicYear: { institutionId: institutionA.id, code: "LAW101", academicYear: "2026-2027" } },
+      create: { code: "LAW101", name: "Should not be used", academicYear: "2026-2027" } as never,
+      update: { name: "Legal Method (Updated)" },
+    });
+    expect(updated.id).toBe(courseA.id);
+    expect(updated.name).toBe("Legal Method (Updated)");
+  });
+
+  it("upsert scoped to tenant A cannot reach tenant B's course through its unique key — falls through to a harmless create instead", async () => {
+    const asTenantA = forTenant(institutionA.id);
+    const result = await asTenantA.course.upsert({
+      where: { institutionId_code_academicYear: { institutionId: institutionB.id, code: "LAW101", academicYear: "2026-2027" } },
+      create: { code: "LAW303", name: "New tenant-A course", academicYear: "2026-2027" } as never,
+      update: { name: "Hijacked via upsert" },
+    });
+    // The contradictory where (institutionId forced to A, but B embedded in
+    // the compound key) can never match courseB, so this takes the create
+    // branch — landing safely in tenant A, never touching tenant B.
+    expect(result.institutionId).toBe(institutionA.id);
+    expect(result.id).not.toBe(courseB.id);
+
+    const stillOriginal = await forPlatform().course.findUnique({ where: { id: courseB.id } });
+    expect(stillOriginal?.name).toBe("Legal Method (Tenant B)");
+
+    await forPlatform().course.delete({ where: { id: result.id } });
+  });
+
+  it("upsert refuses a mismatched institutionId in the create branch", async () => {
+    const asTenantA = forTenant(institutionA.id);
+    await expect(
+      asTenantA.course.upsert({
+        where: { institutionId_code_academicYear: { institutionId: institutionA.id, code: "LAW404", academicYear: "2026-2027" } },
+        create: { institutionId: institutionB.id, code: "LAW404", name: "Attacker-supplied tenant", academicYear: "2026-2027" } as never,
+        update: { name: "Unreachable" },
+      })
+    ).rejects.toThrow(CrossTenantAccessError);
+  });
 });

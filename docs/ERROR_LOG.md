@@ -56,3 +56,41 @@ This *is* a regression test — `tests/e2e/exam-lifecycle.spec.ts` now passes re
 
 ### Status
 RESOLVED
+
+---
+
+## ERROR-004
+
+### Symptom
+After adding a shared `readAnswersFromForm` helper inside the exam-taking Server Component (`attempts/[attemptId]/page.tsx`) and calling it from both `saveProgressAction` and `submitExamAction`, the E2E suite's "student takes the exam" test hung indefinitely with zero CPU activity — no test failure, no timeout message, just silence. `npm run build` and `npx eslint .` both passed clean; the bug only surfaced by actually clicking through the exam in a running dev server (or exercising it via Playwright), where the dev server log showed: `Error: Functions cannot be passed directly to Client Components unless you explicitly expose it by marking it with "use server"`.
+
+### Root Cause
+`readAnswersFromForm` was a plain function (no `"use server"`) defined inside the page's render body, closed over by two different `"use server"` inline actions in the same component. Next.js serializes a server action's closure to reconstruct it on each invocation; a plain function reference captured in that closure isn't serializable data, and only the runtime action-invocation path detects this — not the type checker, not the build's static analysis. Two actions sharing one non-action helper via closure was enough to trip it, even though each action calling its own inline duplicate logic (the pattern before this refactor) never had.
+
+### Fix
+Hoisted `readAnswersFromForm` to module scope (same level as the file's other form-parsing helper, `parseAnswerFromForm`, which already safely worked this way), taking `examQuestions` as an explicit parameter instead of closing over `attempt`. A server action may still call a plain module-level function — the failure mode is specifically about the action's *closure* capturing a function reference, not about calling one.
+
+### Regression Test
+`tests/e2e/exam-lifecycle.spec.ts`'s "student takes the exam" test now passes reliably (4/4 in the full suite) and exercises this exact code path — flagging a question, saving progress, and submitting all route through `readAnswersFromForm`.
+
+### Status
+RESOLVED — general lesson for this codebase: don't extract a shared plain-function helper across two inline `"use server"` actions in the same Server Component. Either give the helper its own `"use server"` in a dedicated file (see `attempts/[attemptId]/actions.ts`), or keep it at module scope taking explicit parameters.
+
+---
+
+## ERROR-005
+
+### Symptom
+`ExamEntryGate`'s mocked device-check step ("Checking your device…") hung indefinitely during live verification — no error, no console output, no progress to the next step (ID verification). Reproduced consistently, not a one-off flake.
+
+### Root Cause
+The device-check step calls `document.documentElement.requestFullscreen()` and `await`s it inside a `try/catch`, on the assumption it would either resolve or reject quickly. In the browser context used for verification, the returned promise did neither — it stayed pending forever. A `try/catch` only protects against a *rejection*; it does nothing for a promise that never settles at all, so the `await` blocked the entire gate sequence permanently. This directly undermined the "soft check, never blocks the exam" design intent from `docs/PITCH_ROADMAP.md` — the intent was right, the implementation only guarded half of the actual failure mode.
+
+### Fix
+Added a `withTimeout()` helper (`Promise.race` against a plain delay) and wrapped the `requestFullscreen()` call in it (1.5s cap) in `src/components/ExamEntryGate.tsx`. A hung fullscreen request now times out and the gate sequence proceeds exactly as if it had failed outright.
+
+### Regression Test
+Not covered by an automated test — Playwright's own browser context didn't reproduce the hang (its `requestFullscreen()` apparently settles fine), so this was only caught by manual live verification in the actual verification tooling used for this session. Documented here so the general lesson survives even without a repro in CI: **any promise from a browser permission/capability API that's part of a "soft" check must be raced against a timeout, not just wrapped in try/catch** — rejection and "never settles" are different failure modes and need different handling.
+
+### Status
+RESOLVED

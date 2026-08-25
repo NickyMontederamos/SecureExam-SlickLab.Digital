@@ -26,7 +26,11 @@ export async function listAttemptsForExam(institutionId: string, actor: { role: 
   }
 
   return db.examAttempt.findMany({
-    where: { examVersionId: version.id, status: { in: ["SUBMITTED", "GRADED"] } },
+    // TERMINATED is included so a confirmed integrity violation stays
+    // visible here after it resolves — it drops out of the integrity-review
+    // queue once decided, and this is the only other list a faculty member
+    // would think to check.
+    where: { examVersionId: version.id, status: { in: ["SUBMITTED", "GRADED", "TERMINATED"] } },
     include: { student: true, answers: true },
     orderBy: { submittedAt: "asc" },
   });

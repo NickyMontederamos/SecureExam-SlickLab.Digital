@@ -2,10 +2,12 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
+import { ExamEntryGate } from "@/components/ExamEntryGate";
 import { addExamQuestion, addExamQuestions, ExamNotFoundError, getExam, publishExam, QuestionNotFoundError } from "@/lib/exams";
 import { listQuestionsForCourse } from "@/lib/questions";
 import { importQuestionsFromCsv, QuestionImportValidationError } from "@/lib/question-import";
-import { findAttemptForStudent, startAttempt } from "@/lib/attempts";
+import { findAttemptForStudent } from "@/lib/attempts";
+import { startAttemptAction } from "./actions";
 
 export default async function ExamBuilderPage({
   params,
@@ -39,16 +41,6 @@ export default async function ExamBuilderPage({
   if (session.user.role === "STUDENT") {
     const myAttempt = version ? await findAttemptForStudent(institutionId, session.user, version.id) : null;
 
-    async function startAttemptAction() {
-      "use server";
-      const authSession = await auth();
-      if (!authSession?.user?.institutionId) {
-        redirect("/login");
-      }
-      const attempt = await startAttempt(authSession.user.institutionId, authSession.user, examId);
-      redirect(`/attempts/${attempt.id}`);
-    }
-
     return (
       <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
         <div>
@@ -75,15 +67,7 @@ export default async function ExamBuilderPage({
                 <li>Submit before time runs out — the exam auto-submits at zero.</li>
               </ul>
             </div>
-            <form action={startAttemptAction} className="flex flex-col gap-3">
-              <label className="flex items-start gap-2 text-sm">
-                <input type="checkbox" required className="mt-1" />
-                I have read and agree to the exam rules above.
-              </label>
-              <button type="submit" className="self-start rounded bg-black px-3 py-2 text-white">
-                Book &amp; Start Exam
-              </button>
-            </form>
+            <ExamEntryGate examId={examId} startAttemptAction={startAttemptAction} />
           </div>
         )}
         {myAttempt?.status === "IN_PROGRESS" && (
@@ -91,7 +75,12 @@ export default async function ExamBuilderPage({
             Continue Exam
           </a>
         )}
-        {(myAttempt?.status === "SUBMITTED" || myAttempt?.status === "GRADED") && (
+        {myAttempt?.status === "INTERRUPTED" && (
+          <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            Your exam is paused pending faculty review.
+          </p>
+        )}
+        {(myAttempt?.status === "SUBMITTED" || myAttempt?.status === "GRADED" || myAttempt?.status === "TERMINATED") && (
           <a href={`/attempts/${myAttempt.id}/result`} className="rounded border px-3 py-2 text-center">
             View Result
           </a>

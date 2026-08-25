@@ -36,9 +36,21 @@ enum ExamStatus {
 enum AttemptStatus {
   NOT_STARTED
   IN_PROGRESS
+  /// Auto-paused by the 3-strike integrity monitor, pending faculty review
+  /// (see AttemptEvent) — not a final state. Faculty either reinstates (back
+  /// to IN_PROGRESS) or confirms as TERMINATED.
   INTERRUPTED
+  /// Confirmed integrity violation — terminal, like SUBMITTED/GRADED, but
+  /// distinct so the result view can show why instead of a plain score.
+  TERMINATED
   SUBMITTED
   GRADED
+}
+
+enum AttemptEventType {
+  WINDOW_BLUR
+  VISIBILITY_HIDDEN
+  FULLSCREEN_EXIT
 }
 
 enum AuditResult {
@@ -261,9 +273,26 @@ model ExamAttempt {
 
   answers    ExamAnswer[]
   submission Submission?
+  events     AttemptEvent[]
 
   @@unique([examVersionId, studentId])
   @@index([institutionId])
+}
+
+/// Append-only integrity signal log (master prompt anti-cheat scope). Every
+/// blur/visibility/fullscreen-exit signal is recorded here regardless of
+/// whether it crosses the warning threshold — the visible "Warning X of 3"
+/// counter is a derived read of this table, never the source of truth. No
+/// institutionId of its own, same reasoning as ExamAnswer — ownership is
+/// verified via the parent attempt's institutionId (see integrity.ts).
+model AttemptEvent {
+  id         String           @id @default(cuid())
+  attemptId  String
+  attempt    ExamAttempt      @relation(fields: [attemptId], references: [id])
+  type       AttemptEventType
+  occurredAt DateTime         @default(now())
+
+  @@index([attemptId])
 }
 
 model ExamAnswer {

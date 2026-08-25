@@ -64,6 +64,11 @@ test.describe.serial("full exam lifecycle", () => {
     await page.click(`text=${examTitle}`);
     await page.check('input[type="checkbox"]'); // agree to the exam rules
     await page.click('button:has-text("Start Exam")');
+    // The click kicks off ExamEntryGate's mocked device/ID/room-scan/proctor
+    // sequence (~7s of scripted delays) before it actually starts the
+    // attempt and navigates — wait for that navigation rather than assuming
+    // it's instant like a plain form submit used to be.
+    await page.waitForURL(/\/attempts\//, { timeout: 15_000 });
 
     await page.locator('input[type="radio"]').first().check(); // the seeded correct choice is first
     await page.click('button:has-text("Submit Exam")');

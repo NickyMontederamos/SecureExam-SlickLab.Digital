@@ -92,6 +92,12 @@ Cheapest, highest-visibility pass. Builds on infrastructure that already exists
 - [x] **"Book Exam" framing** — exams already only ever show from a student's
       enrolled courses (confirmed — no new access-control surface needed); merged
       into the Exam Rules screen as "Book & Start Exam" rather than a separate step.
+- [x] **One question at a time**, with a numbered palette to jump between
+      questions and flagged ones marked with a dot (`src/components/ExamQuestionPager.tsx`).
+      Client-side only — every question's fieldset stays mounted in the one
+      underlying form, so Save Progress/Submit Exam are untouched by this change.
+- [x] **Toolbar moved to top-left** (was bottom-left) — also incidentally fixes
+      the dev-mode-badge collision noted below.
 
   **Verified:** `npm run build`, `npx eslint .`, `npm test` (86/86, incl. a new
   flag-without-answer test), `npm run test:e2e` (4/4, updated to check the new
@@ -102,10 +108,6 @@ Cheapest, highest-visibility pass. Builds on infrastructure that already exists
   Save Progress round-trip, exercised the Calculator and Notepad widgets, and
   let the exam auto-submit at zero — landed on the result page with the
   objective question auto-graded (1/1) and the essay correctly left pending.
-  One dev-only cosmetic note: Next.js's local dev-mode indicator badge
-  overlaps the toolbar's bottom-left corner in `next dev` — doesn't appear in
-  a production build, not worth changing for the pitch, but noted here in
-  case it's confusing during future local demos.
 
 ## Milestone 2 — The exam actively protects itself
 
@@ -115,21 +117,51 @@ one architectural point worth doing right the first time, per
 versus retrofitting later. The schema already has unused scaffolding for exactly
 this: `AttemptStatus.INTERRUPTED` and `ExamVersion.securityPolicy Json?`.
 
-- [ ] **`AttemptEvent`-style table** (new, additive — does not replace `ExamAttempt`/
+- [x] **`AttemptEvent` table** (new, additive — does not replace `ExamAttempt`/
       `ExamAnswer`): records `WINDOW_BLUR`, `VISIBILITY_HIDDEN`, `FULLSCREEN_EXIT`
-      client-side signals with a sequence number, tenant-scoped like every other model.
-- [ ] **Fullscreen enforcement** (browser Fullscreen API) — a real, if soft, control;
-      exiting fullscreen counts as a warning event.
-- [ ] **Visible warning counter** ("Warning 1 of 3") on the student's exam screen,
-      derived from the event log, not stored as its own source of truth.
-- [ ] **Auto-pause at the 3rd warning** — attempt flips to `INTERRUPTED`, further
-      answering is blocked immediately (the real-time protection piece).
-- [ ] **Faculty "Pending Integrity Review" screen** — shows the event trail for a
-      paused attempt; faculty confirms FAILED (final) or reinstates/resumes the
-      attempt. This is where "auto-pause, human confirms" actually lives.
-- [ ] Honesty check for the pitch script: describe this as *deterrence and an
-      audit trail*, never as "cheating is impossible" — every vendor researched
-      (ExamSoft included) explicitly avoids that claim for good reason.
+      signals (`src/lib/integrity.ts`). Not tenant-scoped directly, same pattern
+      as `ExamAnswer` — ownership verified via the parent attempt.
+- [x] **Fullscreen enforcement** (browser Fullscreen API) — soft, folded into
+      `ExamEntryGate`'s device-check step; exiting fullscreen during the exam
+      counts as a warning via `IntegrityMonitor`.
+- [x] **Visible warning counter** ("Warning X of 3") on the student's exam
+      screen (`src/components/IntegrityMonitor.tsx`), derived by reading the
+      event log fresh on every report — never cached on the attempt row.
+- [x] **Auto-pause at the 3rd warning** — attempt flips to `INTERRUPTED`
+      immediately; the exam-taking page renders a distinct "paused, pending
+      review" screen instead of the exam (no further answering possible).
+- [x] **Faculty "Pending Integrity Review" screen**
+      (`attempts/[attemptId]/review/page.tsx`) — shows the full event trail
+      with timestamps; faculty confirms violation (→ new `TERMINATED` status)
+      or reinstates (→ back to `IN_PROGRESS`, student resumes with answers intact).
+      Explicitly blocked for STUDENT role even for their own attempt — this is
+      evidence for someone else's decision, not a result.
+- [x] Honesty framing carried into the UI itself, not just the pitch script:
+      the review screen's own copy says "evidence for a human decision, not an
+      automatic verdict" — matches every vendor researched (ExamSoft included).
+- [x] Trigger set restricted to tab-switch/window-blur/fullscreen-exit only —
+      copy/paste is deliberately NOT wired to a strike, so pasting into the
+      Notepad tool never costs a warning.
+
+  **Verified:** `npm run build`, `npx eslint .`, `npm test` (90/90 — added
+  `integrity.test.ts`: warning counting, auto-pause at exactly 3, the faculty
+  review queue, reinstate, terminate, a stray post-termination event being a
+  no-op, and the student-can-never-view-review permission check), `npm run
+  test:e2e` (4/4, updated for the new gate sequence's ~7s of scripted delay).
+  **Full live click-through**: published a fresh exam, booked it as the
+  student, watched the mock device/ID/room-scan/proctor sequence, dispatched
+  three blur events and watched the warning banner increment 1→2→3 and the
+  exam auto-pause on the third, switched to faculty, saw the attempt in
+  "Pending integrity review," opened the event trail, confirmed a violation,
+  and verified both the grading list (now shows "Terminated," not silently
+  dropped) and the student's result page (clear termination banner, no bare
+  score) reflect it correctly.
+
+  **Real bug found and fixed during that live pass** (not caught by
+  build/lint/tests): the device-check step's `requestFullscreen()` call hung
+  forever in the verification browser instead of resolving or rejecting — a
+  `try/catch` doesn't protect against a promise that never settles. Fixed
+  with a timeout race; see `docs/ERROR_LOG.md` ERROR-005.
 
 ## Milestone 3 — Built for legal education, not generic quizzing
 
@@ -155,22 +187,28 @@ makes the pitch memorable instead of "another anti-cheat app."
 
 ## Milestone 4 — It feels secure at the door
 
-The simulated/lightweight versions of the heavier UX-blueprint items, per the
-fidelity decision — real where cheap, simulated where genuinely expensive.
+**Pulled forward and built alongside Milestone 2**, with one scope change from
+what's written below: ID verification and room scan ended up **fully mocked**
+(no real camera access at all), not the "real, simple" webcam capture
+originally planned — reversed deliberately so a missing/blocked camera on the
+demo device can never derail a live pitch. All of it lives in
+`src/components/ExamEntryGate.tsx`.
 
-- [ ] **Identity snapshot** (real, simple): capture one webcam photo at exam start
-      via `getUserMedia`, attach it to the attempt for faculty to review later.
-      No automated face-matching or liveness detection — that's the expensive
-      part, deliberately not built.
-- [ ] **"Waiting for proctor" simulated gate**: a scripted "Verifying with
-      proctor..." pause screen that auto-advances after a few seconds. Demonstrates
-      the concept without a live console or a staffed proctor during the demo.
-- [ ] **Soft device/app check**: require fullscreen before the exam unlocks, and
-      treat a focus-loss during the pre-check countdown as a blocking warning —
-      a real, browser-achievable approximation of "won't start if other apps are open."
-- [ ] **Exam Rules checklist items** for the physical-environment rules (no
-      wrist watch, clear surroundings) — text/acknowledgment only, paired with
-      the identity snapshot; no automated room-scan analysis.
+- [x] ~~Identity snapshot (real, simple): capture one webcam photo~~ →
+      **built as a fully simulated "Capturing ID… Verified" step, no
+      `getUserMedia` call at all.** Real capture is still the better version
+      long-term (something faculty could actually review), but not worth the
+      live-demo risk before there's a confirmed pilot.
+- [x] **"Waiting for proctor" simulated gate** — a scripted "Waiting for
+      proctor approval…" pause before the exam unlocks. Built exactly as scoped.
+- [x] **Soft device/app check** — fullscreen requested (not required) during
+      the gate's "Checking your device…" step; exiting fullscreen once the
+      exam starts feeds into Milestone 2's warning counter rather than being a
+      separate, disconnected check.
+- [x] **Room scan** — also built as a simulated visual step ("Scanning your
+      surroundings… Clear"), matching the proctor-wait screen's style, rather
+      than the plain Exam-Rules-checklist bullet originally scoped — more
+      convincing for a demo, per the same call as the ID-verification change above.
 
 ---
 

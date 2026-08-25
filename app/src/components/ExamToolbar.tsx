@@ -97,20 +97,7 @@ export function ExamToolbar() {
   const [open, setOpen] = useState<"calculator" | "notepad" | null>(null);
 
   return (
-    <div className="fixed bottom-3 left-3 z-40 flex flex-col items-start gap-2">
-      {open && (
-        <div className="w-64 rounded border bg-white p-3 shadow-lg">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-medium uppercase text-gray-500">
-              {open === "calculator" ? "Calculator" : "Notepad"}
-            </span>
-            <button type="button" onClick={() => setOpen(null)} className="text-xs text-gray-400 hover:text-gray-700">
-              Close
-            </button>
-          </div>
-          {open === "calculator" ? <Calculator /> : <Notepad />}
-        </div>
-      )}
+    <div className="fixed left-3 top-16 z-40 flex flex-col items-start gap-2">
       <div className="flex gap-2">
         <button
           type="button"
@@ -127,6 +114,19 @@ export function ExamToolbar() {
           Notepad
         </button>
       </div>
+      {open && (
+        <div className="w-64 rounded border bg-white p-3 shadow-lg">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-medium uppercase text-gray-500">
+              {open === "calculator" ? "Calculator" : "Notepad"}
+            </span>
+            <button type="button" onClick={() => setOpen(null)} className="text-xs text-gray-400 hover:text-gray-700">
+              Close
+            </button>
+          </div>
+          {open === "calculator" ? <Calculator /> : <Notepad />}
+        </div>
+      )}
     </div>
   );
 }

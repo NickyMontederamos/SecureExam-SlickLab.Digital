@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { ExamCountdown } from "@/components/ExamCountdown";
 import { ExamToolbar } from "@/components/ExamToolbar";
+import { ExamQuestionPager, type QuestionPagerMeta } from "@/components/ExamQuestionPager";
+import { IntegrityMonitor } from "@/components/IntegrityMonitor";
 import {
   AttemptNotFoundError,
   AttemptOwnershipError,
@@ -11,6 +13,8 @@ import {
   saveAnswers,
   submitAttempt,
 } from "@/lib/attempts";
+import { getWarningCount } from "@/lib/integrity";
+import { recordIntegrityEventAction } from "./actions";
 
 type AttemptView = Awaited<ReturnType<typeof getAttemptForTaking>>;
 type ExamQuestionView = AttemptView["examVersion"]["examQuestions"][number];
@@ -105,6 +109,18 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
     throw error;
   }
 
+  if (attempt.status === "INTERRUPTED") {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
+        <h1 className="text-xl font-semibold">{attempt.examVersion.exam.title}</h1>
+        <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+          Your exam was paused after repeated warnings (leaving the window or exiting fullscreen). A faculty member
+          will review your session — you&apos;ll be notified once it&apos;s resolved. Your answers so far are saved.
+        </p>
+      </main>
+    );
+  }
+
   if (attempt.status !== "IN_PROGRESS") {
     redirect(`/attempts/${attemptId}/result`);
   }
@@ -129,6 +145,11 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
 
   const answersByQuestion = new Map(attempt.answers.map((a) => [a.examQuestionId, a]));
   const examQuestions = attempt.examVersion.examQuestions;
+  const warningCount = await getWarningCount(institutionId, attemptId);
+  const questionMeta: QuestionPagerMeta[] = examQuestions.map((eq) => {
+    const row = answersByQuestion.get(eq.id);
+    return { id: eq.id, flagged: row?.isFlagged ?? false, answered: row?.responseJson != null };
+  });
 
   async function saveProgressAction(formData: FormData) {
     "use server";
@@ -155,33 +176,36 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
+      <div className="flex flex-col gap-2">
         <h1 className="text-xl font-semibold">{attempt.examVersion.exam.title}</h1>
         <ExamCountdown deadlineEpochMs={deadlineEpochMs} submitButtonId={SUBMIT_BUTTON_ID} />
+        <IntegrityMonitor attemptId={attemptId} initialWarningCount={warningCount} recordEventAction={recordIntegrityEventAction} />
       </div>
 
       <form action={saveProgressAction} className="flex flex-col gap-6">
-        {attempt.examVersion.examQuestions.map((eq, index) => {
-          const existingRow = answersByQuestion.get(eq.id);
-          return (
-            <fieldset key={eq.id} className="rounded border p-3">
-              <legend className="flex items-center gap-2 px-1 text-sm font-medium">
-                <span>
-                  Q{index + 1} · {eq.points} pt(s)
-                </span>
-                {existingRow?.isFlagged && (
-                  <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">Flagged</span>
-                )}
-              </legend>
-              <p className="mb-2 text-sm">{eq.questionVersion.prompt}</p>
-              {renderInput(eq, existingRow)}
-              <label className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-                <input type="checkbox" name={`flag_${eq.id}`} defaultChecked={existingRow?.isFlagged ?? false} />
-                Flag this question to review before submitting
-              </label>
-            </fieldset>
-          );
-        })}
+        <ExamQuestionPager questions={questionMeta}>
+          {attempt.examVersion.examQuestions.map((eq, index) => {
+            const existingRow = answersByQuestion.get(eq.id);
+            return (
+              <fieldset key={eq.id} className="rounded border p-3">
+                <legend className="flex items-center gap-2 px-1 text-sm font-medium">
+                  <span>
+                    Q{index + 1} · {eq.points} pt(s)
+                  </span>
+                  {existingRow?.isFlagged && (
+                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">Flagged</span>
+                  )}
+                </legend>
+                <p className="mb-2 text-sm">{eq.questionVersion.prompt}</p>
+                {renderInput(eq, existingRow)}
+                <label className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                  <input type="checkbox" name={`flag_${eq.id}`} defaultChecked={existingRow?.isFlagged ?? false} />
+                  Flag this question to review before submitting
+                </label>
+              </fieldset>
+            );
+          })}
+        </ExamQuestionPager>
 
         <div className="flex gap-3">
           <button type="submit" className="rounded border px-3 py-2">

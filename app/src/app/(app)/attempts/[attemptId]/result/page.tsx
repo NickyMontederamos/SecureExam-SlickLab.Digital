@@ -41,11 +41,18 @@ export default async function AttemptResultPage({
         {expired === "1" && (
           <p className="text-sm text-amber-700">Time expired — this exam was auto-submitted.</p>
         )}
-        <p className="text-sm text-gray-500">
-          {result.isFullyGraded
-            ? `Score: ${result.scoredPoints} / ${result.totalPoints}`
-            : `Partial score so far: ${result.scoredPoints} / ${result.totalPoints} (some answers pending manual grading)`}
-        </p>
+        {result.attempt.status === "TERMINATED" ? (
+          <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+            This attempt was terminated following an integrity review — a faculty member confirmed a violation after
+            repeated warnings during the exam. Contact your instructor if you believe this was in error.
+          </p>
+        ) : (
+          <p className="text-sm text-gray-500">
+            {result.isFullyGraded
+              ? `Score: ${result.scoredPoints} / ${result.totalPoints}`
+              : `Partial score so far: ${result.scoredPoints} / ${result.totalPoints} (some answers pending manual grading)`}
+          </p>
+        )}
       </div>
 
       <section className="flex flex-col gap-2">

@@ -3,6 +3,7 @@ import { ForbiddenError } from "../rbac";
 import { forPlatform } from "../tenant-db";
 import {
   assignFaculty,
+  assignProctor,
   CourseCodeTakenError,
   CourseHasContentError,
   createCourse,
@@ -10,6 +11,7 @@ import {
   enrollStudent,
   getCourseWithRoster,
   unassignFaculty,
+  unassignProctor,
   unenrollStudent,
   updateCourse,
   UserNotFoundError,
@@ -20,6 +22,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
   let institutionA: { id: string };
   let institutionB: { id: string };
   let facultyA: { id: string };
+  let proctorA: { id: string };
   let studentA: { id: string };
   let facultyB: { id: string };
 
@@ -34,6 +37,9 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     facultyA = await platform.user.create({
       data: { institutionId: institutionA.id, email: `course-faculty-${runId}@test.local`, name: "Faculty A", role: "FACULTY", passwordHash: "x" },
     });
+    proctorA = await platform.user.create({
+      data: { institutionId: institutionA.id, email: `course-proctor-${runId}@test.local`, name: "Proctor A", role: "PROCTOR", passwordHash: "x" },
+    });
     studentA = await platform.user.create({
       data: { institutionId: institutionA.id, email: `course-student-${runId}@test.local`, name: "Student A", role: "STUDENT", passwordHash: "x" },
     });
@@ -46,6 +52,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     const platform = forPlatform();
     await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseProctor.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: { in: [institutionA.id, institutionB.id] } } });
     await platform.user.deleteMany({ where: { institutionId: { in: [institutionA.id, institutionB.id] } } });
@@ -87,6 +94,35 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
     expect(roster.faculty.some((f) => f.userId === facultyA.id)).toBe(true);
     expect(roster.enrollments.some((e) => e.userId === studentA.id)).toBe(true);
+  });
+
+  it("assigns a proctor, reflected in the roster", async () => {
+    const courses = await forPlatform().course.findMany({ where: { institutionId: institutionA.id, code: "LAW999" } });
+    const courseId = courses[0].id;
+
+    await assignProctor(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, proctorA.id);
+
+    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    expect(roster.proctors.some((p) => p.userId === proctorA.id)).toBe(true);
+  });
+
+  it("refuses to assign a student as a proctor", async () => {
+    const courses = await forPlatform().course.findMany({ where: { institutionId: institutionA.id, code: "LAW999" } });
+    const courseId = courses[0].id;
+
+    await expect(
+      assignProctor(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, studentA.id)
+    ).rejects.toThrow(UserNotFoundError);
+  });
+
+  it("unassigns a proctor", async () => {
+    const courses = await forPlatform().course.findMany({ where: { institutionId: institutionA.id, code: "LAW999" } });
+    const courseId = courses[0].id;
+
+    await unassignProctor(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, proctorA.id);
+
+    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    expect(roster.proctors.some((p) => p.userId === proctorA.id)).toBe(false);
   });
 
   it("refuses to assign a faculty member from another institution", async () => {

@@ -39,6 +39,24 @@ export class AttemptOwnershipError extends Error {
   }
 }
 
+export class ScheduledTimeOutOfWindowError extends Error {
+  constructor(scheduledFor: Date, availableFrom: Date | null, availableUntil: Date | null) {
+    super(
+      `Requested time ${scheduledFor.toISOString()} falls outside the exam's available window ` +
+        `(${availableFrom?.toISOString() ?? "no start"} – ${availableUntil?.toISOString() ?? "no end"})`
+    );
+    this.name = "ScheduledTimeOutOfWindowError";
+  }
+}
+
+/** beginBookedAttempt refused because the real proctor-approval gate (docs/PITCH_ROADMAP.md Milestone 5) hasn't been satisfied yet — see proctorApprovedAt on ExamAttempt and approveProctorStart in proctoring.ts. */
+export class ProctorApprovalRequiredError extends Error {
+  constructor(attemptId: string) {
+    super(`Attempt ${attemptId} is waiting on proctor approval before it can start`);
+    this.name = "ProctorApprovalRequiredError";
+  }
+}
+
 /**
  * Starts (or resumes) a student's attempt at a published exam. Enforces:
  * exam must be PUBLISHED, student must be enrolled in the exam's course,
@@ -101,8 +119,19 @@ export async function startAttempt(institutionId: string, actor: { id: string; r
  * startAttempt; calling it again while NOT_STARTED or IN_PROGRESS just
  * returns the existing booking (idempotent), same no-retake refusal once
  * finished.
+ *
+ * scheduledFor is the student's picked instant within the exam's
+ * availableFrom/availableUntil window (Milestone 5's real scheduling,
+ * replacing "confirm the one fixed window"). Optional and unvalidated when
+ * the exam has no window at all — booking stays "anytime" for those exams,
+ * same as before this field existed.
  */
-export async function bookAttempt(institutionId: string, actor: { id: string; role: Role }, examId: string) {
+export async function bookAttempt(
+  institutionId: string,
+  actor: { id: string; role: Role },
+  examId: string,
+  scheduledFor?: Date
+) {
   assertCan(actor.role, "exam_attempt", "create");
 
   const db = forTenant(institutionId);
@@ -120,6 +149,14 @@ export async function bookAttempt(institutionId: string, actor: { id: string; ro
   const version = exam.versions[0];
   if (!version) {
     throw new ExamNotPublishedError(examId);
+  }
+
+  if (
+    scheduledFor &&
+    ((version.availableFrom && scheduledFor < version.availableFrom) ||
+      (version.availableUntil && scheduledFor > version.availableUntil))
+  ) {
+    throw new ScheduledTimeOutOfWindowError(scheduledFor, version.availableFrom, version.availableUntil);
   }
 
   if (actor.role === "STUDENT") {
@@ -142,6 +179,7 @@ export async function bookAttempt(institutionId: string, actor: { id: string; ro
       examVersionId: version.id,
       studentId: actor.id,
       status: "NOT_STARTED",
+      scheduledFor,
       timeRemainingSeconds: version.timeLimitMinutes * 60,
     } as never,
   });
@@ -156,6 +194,11 @@ export async function bookAttempt(institutionId: string, actor: { id: string; ro
  * startedAt set now; IN_PROGRESS is a no-op resume, matching startAttempt's
  * existing resume behavior for callers that skip booking entirely (tests,
  * mainly — see attempts.test.ts).
+ *
+ * Requires proctorApprovedAt to be set (Milestone 5's real wait-for-proctor
+ * gate — see requestProctorApproval/approveProctorStart in proctoring.ts).
+ * This is the actual enforcement point: nothing else stops a student from
+ * calling this the moment they've booked.
  */
 export async function beginBookedAttempt(institutionId: string, actor: { id: string; role: Role }, attemptId: string) {
   assertCan(actor.role, "exam_attempt", "take");
@@ -170,6 +213,9 @@ export async function beginBookedAttempt(institutionId: string, actor: { id: str
     throw new AttemptOwnershipError(attemptId);
   }
   if (attempt.status === "NOT_STARTED") {
+    if (!attempt.proctorApprovedAt) {
+      throw new ProctorApprovalRequiredError(attemptId);
+    }
     return db.examAttempt.update({ where: { id: attemptId }, data: { status: "IN_PROGRESS", startedAt: new Date() } });
   }
   if (attempt.status === "IN_PROGRESS") {
@@ -401,6 +447,7 @@ export async function getAttemptResult(institutionId: string, actor: { id: strin
         include: { exam: true, examQuestions: { include: { questionVersion: true }, orderBy: { order: "asc" } } },
       },
       answers: true,
+      submission: true,
     },
   });
   if (!attempt) {

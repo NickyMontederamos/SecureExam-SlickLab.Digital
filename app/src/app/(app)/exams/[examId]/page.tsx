@@ -3,11 +3,21 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
 import { ExamEntryGate } from "@/components/ExamEntryGate";
-import { addExamQuestion, addExamQuestions, ExamNotFoundError, getExam, publishExam, QuestionNotFoundError } from "@/lib/exams";
+import {
+  addExamQuestion,
+  addExamQuestions,
+  deleteExam,
+  ExamNotFoundError,
+  getExam,
+  publishExam,
+  QuestionNotFoundError,
+  removeExamQuestion,
+  updateExam,
+} from "@/lib/exams";
 import { listQuestionsForCourse } from "@/lib/questions";
 import { importQuestionsFromCsv, QuestionImportValidationError } from "@/lib/question-import";
-import { bookAttempt, findAttemptForStudent } from "@/lib/attempts";
-import { beginAttemptAction } from "./actions";
+import { bookAttempt, findAttemptForStudent, ScheduledTimeOutOfWindowError } from "@/lib/attempts";
+import { beginAttemptAction, checkProctorApprovalAction, requestProctorApprovalAction } from "./actions";
 
 function formatWindow(from: Date | null, until: Date | null): string | null {
   if (!from && !until) return null;
@@ -17,12 +27,18 @@ function formatWindow(from: Date | null, until: Date | null): string | null {
   return `Closes ${fmt(until!)}`;
 }
 
+/** `datetime-local` inputs need "YYYY-MM-DDTHH:mm" in the browser's local time, not an ISO string with a timezone. */
+function toDatetimeLocalValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default async function ExamBuilderPage({
   params,
   searchParams,
 }: {
   params: Promise<{ examId: string }>;
-  searchParams: Promise<{ importError?: string; imported?: string; bulkError?: string }>;
+  searchParams: Promise<{ importError?: string; imported?: string; bulkError?: string; bookingError?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.institutionId) {
@@ -30,7 +46,7 @@ export default async function ExamBuilderPage({
   }
 
   const { examId } = await params;
-  const { importError, imported, bulkError } = await searchParams;
+  const { importError, imported, bulkError, bookingError } = await searchParams;
   const institutionId = session.user.institutionId;
 
   let exam: Awaited<ReturnType<typeof getExam>>;
@@ -49,14 +65,28 @@ export default async function ExamBuilderPage({
   if (session.user.role === "STUDENT") {
     const myAttempt = version ? await findAttemptForStudent(institutionId, session.user, version.id) : null;
     const windowLabel = version ? formatWindow(version.availableFrom, version.availableUntil) : null;
+    const hasWindow = Boolean(version?.availableFrom || version?.availableUntil);
+    const scheduledForLabel = myAttempt?.scheduledFor
+      ? myAttempt.scheduledFor.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+      : null;
 
-    async function confirmBookingAction() {
+    async function confirmBookingAction(formData: FormData) {
       "use server";
       const authSession = await auth();
       if (!authSession?.user?.institutionId) {
         redirect("/login");
       }
-      await bookAttempt(authSession.user.institutionId, authSession.user, examId);
+      const scheduledForRaw = String(formData.get("scheduledFor") ?? "");
+      const scheduledFor = scheduledForRaw ? new Date(scheduledForRaw) : undefined;
+
+      try {
+        await bookAttempt(authSession.user.institutionId, authSession.user, examId, scheduledFor);
+      } catch (err) {
+        if (err instanceof ScheduledTimeOutOfWindowError) {
+          redirect(`/exams/${examId}?bookingError=${encodeURIComponent(err.message)}`);
+        }
+        throw err;
+      }
       revalidatePath(`/exams/${examId}`);
     }
 
@@ -74,14 +104,33 @@ export default async function ExamBuilderPage({
           )}
         </div>
 
+        {bookingError && (
+          <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
+            {bookingError}
+          </p>
+        )}
+
         {!myAttempt && (
           <div className="flex flex-col gap-4 rounded border p-4">
             <div>
               <h2 className="mb-2 font-medium">Book This Exam</h2>
               <p className="text-sm text-gray-500">Available: {windowLabel ?? "No fixed window — book anytime"}</p>
             </div>
-            <form action={confirmBookingAction}>
-              <button type="submit" className="rounded bg-black px-3 py-2 text-white">
+            <form action={confirmBookingAction} className="flex flex-col gap-3">
+              {hasWindow && (
+                <label className="flex flex-col gap-1 text-sm">
+                  Pick a time within the window
+                  <input
+                    name="scheduledFor"
+                    type="datetime-local"
+                    required
+                    min={version?.availableFrom ? toDatetimeLocalValue(version.availableFrom) : undefined}
+                    max={version?.availableUntil ? toDatetimeLocalValue(version.availableUntil) : undefined}
+                    className="rounded border px-3 py-2"
+                  />
+                </label>
+              )}
+              <button type="submit" className="self-start rounded bg-black px-3 py-2 text-white">
                 Confirm Booking
               </button>
             </form>
@@ -92,8 +141,11 @@ export default async function ExamBuilderPage({
             attemptId={myAttempt.id}
             examTitle={exam.title}
             windowLabel={windowLabel}
+            scheduledForLabel={scheduledForLabel}
             confirmationCode={myAttempt.id}
             beginAttemptAction={beginAttemptAction}
+            requestProctorApprovalAction={requestProctorApprovalAction}
+            checkProctorApprovalAction={checkProctorApprovalAction}
           />
         )}
         {myAttempt?.status === "IN_PROGRESS" && (
@@ -117,12 +169,59 @@ export default async function ExamBuilderPage({
 
   const canEdit = can(session.user.role, "exam", "update") && isDraft;
   const canPublish = can(session.user.role, "exam", "publish") && isDraft;
+  const canDelete = can(session.user.role, "exam", "delete") && isDraft;
 
   const availableQuestions = canEdit
     ? await listQuestionsForCourse(institutionId, session.user, exam.courseId)
     : [];
   const usedQuestionIds = new Set(version?.examQuestions.map((eq) => eq.questionId) ?? []);
   const unusedQuestions = availableQuestions.filter((q) => !usedQuestionIds.has(q.id));
+
+  async function updateExamAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+
+    const title = String(formData.get("title") ?? "").trim();
+    const timeLimitMinutes = Number(formData.get("timeLimitMinutes") ?? 60);
+    const availableFromRaw = String(formData.get("availableFrom") ?? "");
+    const availableUntilRaw = String(formData.get("availableUntil") ?? "");
+
+    await updateExam(authSession.user.institutionId, authSession.user, examId, {
+      title,
+      timeLimitMinutes,
+      availableFrom: availableFromRaw ? new Date(availableFromRaw) : undefined,
+      availableUntil: availableUntilRaw ? new Date(availableUntilRaw) : undefined,
+    });
+    revalidatePath(`/exams/${examId}`);
+  }
+
+  async function removeQuestionAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+
+    const examQuestionId = String(formData.get("examQuestionId") ?? "");
+    if (!examQuestionId) return;
+
+    await removeExamQuestion(authSession.user.institutionId, authSession.user, examId, examQuestionId);
+    revalidatePath(`/exams/${examId}`);
+  }
+
+  async function deleteExamAction() {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+
+    await deleteExam(authSession.user.institutionId, authSession.user, examId);
+    redirect(`/courses/${exam.courseId}/exams`);
+  }
 
   async function addQuestionAction(formData: FormData) {
     "use server";
@@ -249,8 +348,57 @@ export default async function ExamBuilderPage({
         </p>
       )}
 
+      {canEdit && version && (
+        <section className="rounded border p-4">
+          <h2 className="mb-3 font-medium">Exam details</h2>
+          <form action={updateExamAction} className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1 text-sm">
+              Title
+              <input name="title" required defaultValue={exam.title} className="rounded border px-3 py-2" />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Time limit (minutes)
+              <input
+                name="timeLimitMinutes"
+                type="number"
+                defaultValue={version.timeLimitMinutes}
+                className="rounded border px-3 py-2"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Available from (optional)
+              <input
+                name="availableFrom"
+                type="datetime-local"
+                defaultValue={version.availableFrom ? toDatetimeLocalValue(version.availableFrom) : undefined}
+                className="rounded border px-3 py-2"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Available until (optional)
+              <input
+                name="availableUntil"
+                type="datetime-local"
+                defaultValue={version.availableUntil ? toDatetimeLocalValue(version.availableUntil) : undefined}
+                className="rounded border px-3 py-2"
+              />
+            </label>
+            <button type="submit" className="self-start rounded border px-3 py-2 text-sm">
+              Save changes
+            </button>
+          </form>
+        </section>
+      )}
+
       <section className="flex flex-col gap-2">
-        <h2 className="font-medium">Questions ({version?.examQuestions.length ?? 0})</h2>
+        <h2 className="font-medium">
+          Questions ({version?.examQuestions.length ?? 0})
+          {version && version.examQuestions.length > 0 && (
+            <span className="ml-2 font-normal text-gray-500">
+              · {version.examQuestions.reduce((sum, eq) => sum + eq.points, 0)} pt(s) total
+            </span>
+          )}
+        </h2>
         {(!version || version.examQuestions.length === 0) && (
           <p className="text-sm text-gray-500">No questions added yet.</p>
         )}
@@ -258,7 +406,17 @@ export default async function ExamBuilderPage({
           <div key={eq.id} className="rounded border p-3 text-sm">
             <div className="flex items-center justify-between">
               <span className="font-medium">Q{eq.order + 1}</span>
-              <span className="text-gray-500">{eq.points} pt(s)</span>
+              <span className="flex items-center gap-2">
+                <span className="text-gray-500">{eq.points} pt(s)</span>
+                {canEdit && (
+                  <form action={removeQuestionAction}>
+                    <input type="hidden" name="examQuestionId" value={eq.id} />
+                    <button type="submit" className="text-xs text-red-700 underline">
+                      Remove
+                    </button>
+                  </form>
+                )}
+              </span>
             </div>
             <p className="mt-1">{eq.questionVersion.prompt}</p>
           </div>
@@ -351,6 +509,17 @@ export default async function ExamBuilderPage({
           </button>
           <p className="mt-1 text-xs text-gray-500">
             Freezes this version — no more edits to it once published (Phase 1 has no re-versioning yet).
+          </p>
+        </form>
+      )}
+
+      {canDelete && (
+        <form action={deleteExamAction}>
+          <button type="submit" className="rounded bg-red-700 px-3 py-2 text-sm text-white">
+            Delete exam
+          </button>
+          <p className="mt-1 text-xs text-gray-500">
+            Safe while still a draft — no student can have an attempt against an unpublished exam.
           </p>
         </form>
       )}

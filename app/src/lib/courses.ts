@@ -92,6 +92,7 @@ export async function getCourseWithRoster(institutionId: string, actor: { role: 
     where: { id: courseId },
     include: {
       faculty: { include: { user: true } },
+      proctors: { include: { user: true } },
       enrollments: { include: { user: true } },
       _count: { select: { questions: true, exams: true } },
     },
@@ -144,6 +145,7 @@ export async function deleteCourse(institutionId: string, actor: { role: Role },
   await db.$transaction([
     db.enrollment.deleteMany({ where: { courseId } }),
     db.courseFaculty.deleteMany({ where: { courseId } }),
+    db.courseProctor.deleteMany({ where: { courseId } }),
     db.course.delete({ where: { id: courseId } }),
   ]);
 }
@@ -166,6 +168,33 @@ export async function assignFaculty(institutionId: string, actor: { role: Role }
     update: {},
     create: { courseId, userId } as never,
   });
+}
+
+/** Same shape as assignFaculty — see CourseProctor in schema.prisma for why this is a separate table rather than reusing CourseFaculty. */
+export async function assignProctor(institutionId: string, actor: { role: Role }, courseId: string, userId: string) {
+  assertCan(actor.role, "course", "update");
+
+  const db = forTenant(institutionId);
+  const course = await db.course.findFirst({ where: { id: courseId } });
+  if (!course) {
+    throw new CourseNotFoundError(courseId);
+  }
+  const user = await db.user.findFirst({ where: { id: userId, role: "PROCTOR" } });
+  if (!user) {
+    throw new UserNotFoundError(userId, "PROCTOR");
+  }
+
+  return db.courseProctor.upsert({
+    where: { courseId_userId: { courseId, userId } },
+    update: {},
+    create: { courseId, userId } as never,
+  });
+}
+
+export async function unassignProctor(institutionId: string, actor: { role: Role }, courseId: string, userId: string) {
+  assertCan(actor.role, "course", "update");
+  const db = forTenant(institutionId);
+  await db.courseProctor.deleteMany({ where: { courseId, userId } });
 }
 
 export async function enrollStudent(institutionId: string, actor: { role: Role }, courseId: string, userId: string) {

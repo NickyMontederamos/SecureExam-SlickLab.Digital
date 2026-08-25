@@ -16,6 +16,15 @@ const STEP_LABELS: Record<Extract<GateStep, "device" | "identity" | "room" | "pr
 /** How long each mocked gate step is shown before advancing — pacing for a demo, not a real check duration. */
 const STEP_DELAY_MS = 1400;
 
+/**
+ * How often the "proctor" step re-checks whether it's been approved (see
+ * checkProctorApprovalAction). A few seconds of lag is an accepted
+ * trade-off — this app has no WebSocket/SSE infrastructure anywhere else
+ * (docs/NEXT_PHASE_PLAN.md), so short-interval polling is the
+ * pattern-consistent choice, not a real-time push.
+ */
+const PROCTOR_POLL_INTERVAL_MS = 5000;
+
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -33,13 +42,19 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | undefined>
 
 /**
  * Everything after "Confirm Booking" and before the exam actually starts:
- * a receipt, the Exam Rules agreement, then the mocked device/ID/room-scan/
- * proctor sequence (docs/PITCH_ROADMAP.md). Device/ID/room-scan/proctor are
- * deliberately mocked — no real camera access, no real proctor — so a
- * missing/blocked camera on a demo device can never derail a live pitch.
- * Fullscreen is the one real check here, and it's soft: exiting/denying it
- * never blocks the exam, it just becomes the first thing the in-exam
- * integrity monitor can flag once questions start.
+ * a receipt, the Exam Rules agreement, then the device/ID/room-scan/proctor
+ * sequence (docs/PITCH_ROADMAP.md). Device/ID/room-scan are deliberately
+ * mocked — no real camera access — so a missing/blocked camera on a demo
+ * device can never derail a live pitch. Fullscreen is the one real check
+ * here, and it's soft: exiting/denying it never blocks the exam, it just
+ * becomes the first thing the in-exam integrity monitor can flag once
+ * questions start.
+ *
+ * The proctor step is real as of Milestone 5: it signals the student's
+ * attempt is ready (requestProctorApprovalAction) and polls
+ * (checkProctorApprovalAction) until an actual proctor approves it on their
+ * dashboard — no fallback if no proctor is available yet, by deliberate
+ * choice (see docs/NEXT_PHASE_PLAN.md); this can wait indefinitely.
  *
  * NOTE for later hardening: the booked window doesn't currently gate when
  * "Start Exam" can be clicked — it's available immediately after booking,
@@ -51,14 +66,20 @@ export function ExamEntryGate({
   attemptId,
   examTitle,
   windowLabel,
+  scheduledForLabel,
   confirmationCode,
   beginAttemptAction,
+  requestProctorApprovalAction,
+  checkProctorApprovalAction,
 }: {
   attemptId: string;
   examTitle: string;
   windowLabel: string | null;
+  scheduledForLabel: string | null;
   confirmationCode: string;
   beginAttemptAction: (attemptId: string) => Promise<void>;
+  requestProctorApprovalAction: (attemptId: string) => Promise<void>;
+  checkProctorApprovalAction: (attemptId: string) => Promise<boolean>;
 }) {
   const router = useRouter();
   const [agreed, setAgreed] = useState(false);
@@ -84,7 +105,18 @@ export function ExamEntryGate({
     await wait(STEP_DELAY_MS);
 
     setStep("proctor");
-    await wait(STEP_DELAY_MS * 1.3);
+    try {
+      await requestProctorApprovalAction(attemptId);
+      let approved = await checkProctorApprovalAction(attemptId);
+      while (!approved) {
+        await wait(PROCTOR_POLL_INTERVAL_MS);
+        approved = await checkProctorApprovalAction(attemptId);
+      }
+    } catch {
+      setError("Couldn't reach a proctor. Please try again.");
+      setStep("rules");
+      return;
+    }
 
     setStep("starting");
     try {
@@ -105,8 +137,17 @@ export function ExamEntryGate({
           <dd className="font-mono">{confirmationCode}</dd>
           <dt className="text-gray-500">Exam</dt>
           <dd>{examTitle}</dd>
-          <dt className="text-gray-500">Available window</dt>
-          <dd>{windowLabel ?? "No fixed window — start anytime"}</dd>
+          {scheduledForLabel ? (
+            <>
+              <dt className="text-gray-500">Your scheduled time</dt>
+              <dd>{scheduledForLabel}</dd>
+            </>
+          ) : (
+            <>
+              <dt className="text-gray-500">Available window</dt>
+              <dd>{windowLabel ?? "No fixed window — start anytime"}</dd>
+            </>
+          )}
         </dl>
         <button
           type="button"

@@ -103,11 +103,13 @@ model User {
   updatedAt      DateTime     @updatedAt
 
   coursesTaught       CourseFaculty[]
+  coursesProctoring   CourseProctor[]
   enrollments         Enrollment[]
   questionsCreated    Question[]        @relation("QuestionCreatedBy")
   examsCreated        Exam[]            @relation("ExamCreatedBy")
   examAttempts        ExamAttempt[]
   answersGraded       ExamAnswer[]      @relation("AnswerGradedBy")
+  submissionsVerified Submission[]      @relation("SubmissionVerifiedBy")
   auditLogs           AuditLog[]
   deviceRegistrations DeviceRegistration[]
 
@@ -124,6 +126,7 @@ model Course {
   createdAt     DateTime    @default(now())
 
   faculty     CourseFaculty[]
+  proctors    CourseProctor[]
   enrollments Enrollment[]
   questions   Question[]
   exams       Exam[]
@@ -133,6 +136,22 @@ model Course {
 }
 
 model CourseFaculty {
+  id            String      @id @default(cuid())
+  institutionId String
+  courseId      String
+  course        Course      @relation(fields: [courseId], references: [id])
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+
+  @@unique([courseId, userId])
+  @@index([institutionId])
+}
+
+/// Which PROCTOR users may act on a course's exam attempts — same
+/// roster-assignment shape as CourseFaculty, kept as its own table rather
+/// than reusing CourseFaculty so a user's faculty and proctor assignments
+/// stay independent (a PROCTOR is never implicitly a course's faculty).
+model CourseProctor {
   id            String      @id @default(cuid())
   institutionId String
   courseId      String
@@ -269,6 +288,23 @@ model ExamAttempt {
   studentId           String
   student             User          @relation(fields: [studentId], references: [id])
   status              AttemptStatus @default(NOT_STARTED)
+  /// Student-picked instant within the exam's availableFrom/availableUntil
+  /// window (see bookAttempt in attempts.ts). Null when the exam has no
+  /// window at all — booking is then "anytime", same as before this field
+  /// existed. Informational only in Phase 1: does not yet gate when Start
+  /// Exam can be clicked (tracked in docs/PITCH_ROADMAP.md as deferred
+  /// hardening).
+  scheduledFor        DateTime?
+  /// Set when the student finishes the entry gate's device/identity/room
+  /// checks and signals "ready to start, waiting for a proctor" — the real
+  /// replacement for the old scripted "Waiting for proctor…" delay. Null
+  /// means no request has been made yet.
+  proctorRequestedAt  DateTime?
+  /// Set when a proctor assigned to this exam's course approves the
+  /// request above. beginBookedAttempt() refuses to start the timer until
+  /// this is set (see ProctorApprovalRequiredError in attempts.ts) — this
+  /// is the real gate that replaces the mocked delay.
+  proctorApprovedAt   DateTime?
   startedAt           DateTime?
   submittedAt         DateTime?
   gradedAt            DateTime?
@@ -331,7 +367,12 @@ model Submission {
   signature            String?
   receiptId            String      @unique @default(cuid())
   uploadedAt            DateTime    @default(now())
+  /// The real "approve to finish" step (docs/PITCH_ROADMAP.md Milestone 5):
+  /// a student sees their result only once a proctor sets this — see
+  /// verifySubmission in proctoring.ts. Never set by submitAttempt itself.
   verifiedAt            DateTime?
+  verifiedById          String?
+  verifiedBy            User?       @relation("SubmissionVerifiedBy", fields: [verifiedById], references: [id])
 }
 
 /// WHO / WHAT / WHEN / WHERE / RESULT (master prompt §20). Append-only in

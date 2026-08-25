@@ -294,3 +294,85 @@ Said explicitly, matching this project's own documentation discipline:
   manual/scripted verification pass, not a replacement for `npm test` (94/94 passing as
   of this commit) or `npm run test:e2e` (4/4 passing), which remain the actual
   regression safety net.
+
+---
+
+## Addendum — Milestone 5 (real proctor feature) verification, 2026-08-26
+
+Unlike the walkthrough above, this pass was **not** driven interactively in a Browser
+pane — this session's sandbox refused to launch a manual preview server against this
+project (it lives outside the sandboxed working directory). Verification instead
+combined three things, each real against the actual dev server and a real Postgres
+database, not mocks:
+
+1. **`npm test`** — 104/104, including new `proctoring.test.ts` (queue scoping by
+   `CourseProctor` assignment, the approval gate refusing an unassigned proctor,
+   `beginBookedAttempt` refusing without approval, submission-verification scoping and
+   idempotency) and windowed-scheduling coverage added to `attempts.test.ts`.
+2. **`npx playwright test`** — a real Chromium browser driving the real dev server,
+   including a second browser context logging in as the seeded demo proctor
+   (`proctor@cmlaw.demo`, assigned to LAW101) to approve both the start request and the
+   finish request while the student's page was actually polling — nothing in this flow
+   is auto-approved. Passed 2/2 consecutive runs after the fixes below landed.
+3. **Direct Postgres inspection** (throwaway `tsx` scripts, deleted after use) to
+   confirm `proctorRequestedAt`/`proctorApprovedAt`/`Submission.verifiedAt` were
+   actually persisted, not just that the UI looked right — this is what caught both
+   bugs below, since the first one produced no visible error at all.
+
+**Two real bugs found and fixed during this pass** (not caught by `npm test`,
+`npm run build`, or `npx eslint .`) — see `docs/ERROR_LOG.md` ERROR-007 and ERROR-008
+for full root-cause detail:
+
+- **ERROR-007**: the entry gate's proctor-approval poll loop silently froze forever,
+  even after the proctor approved, because a `useEffect` cleanup meant to guard against
+  polling after unmount was corrupted by React Strict Mode's dev-mode double-invoke —
+  it flipped `cancelledRef.current` to `true` before the student ever clicked "Start
+  Exam." Fixed by deleting the unmount guard; nothing else in this component needed one.
+- **ERROR-008**: not an app bug — the E2E test's `page.click('button:has-text("Approve
+  to finish")')` silently clicked the *first* matching button on the page instead of
+  the one for this test run, because `Submission.verifiedAt` had never been set by any
+  code before this milestone, so every historical graded attempt across this project's
+  many prior live-verification sessions showed up in the proctor's queue too (10 items,
+  not 1). Fixed by scoping the test's selectors to the specific row.
+
+No screenshots were captured by this session for the pass described above (no
+interactive Browser pane access) — the proof there is the passing automated suites plus
+the direct DB verification described above, which is what actually caught the two real
+bugs.
+
+### Follow-up: real interactive confirmation by the user, same day
+
+Separately from the above, the user ran their own full interactive click-through against
+the same running dev server (`http://localhost:3010`), across four simultaneous browser
+windows (Institution Admin, Faculty, Student, Proctor) — not the seeded demo data, but a
+freshly created course (`SPLIT101 — TEST SPLIT`) with real faculty/proctor/student
+accounts assigned via the admin and course-manage UI. Confirmed working, watched live:
+
+- Faculty imported 50 real Philippine-Bar-style questions via CSV directly into a new
+  exam and published it.
+- Student booked the exam with a real scheduled time picked from the new
+  `datetime-local` window picker (`Aug 26, 2026, 4:35 AM`), saw it echoed correctly on
+  the receipt, and passed through the entry gate — including the soft fullscreen
+  request actually engaging fullscreen, not just the mocked steps.
+- The real wait-for-proctor gate held the student on "waiting for proctor" until the
+  proctor, in a separate window, approved the request from `/proctor` — confirmed
+  working, not simulated.
+- After submitting (a 50-question exam — 20 answers landed in the pending-manual-grading
+  queue, matching the mix of objective/essay question types imported), the student sat
+  on the post-submission waiting screen until the proctor approved finishing from the
+  same dashboard — confirmed working.
+
+This is the first fully human-driven, real-account confirmation of Milestone 5's
+complete flow (scheduling → real gate → real approval-to-start → real
+approval-to-finish), independent of and consistent with the automated verification
+above.
+
+**One incidental note from this pass, not a Milestone 5 issue**: a hydration console
+warning appeared, showing a `tracy-version` attribute present on the client but not the
+server-rendered `<html>` tag. `src/app/layout.tsx` (the only file that could produce
+this) hasn't been touched since an unrelated earlier commit, and `tracy` doesn't appear
+anywhere in this codebase — consistent with Next.js's own explanation for this class of
+warning ("a browser extension installed which messes with the HTML before React
+loaded"), not an application bug. Also noted: the faculty grading list's pending-count
+display is easy to miss on a large exam — logged in `docs/PITCH_ROADMAP.md`'s backlog
+section, not addressed here.

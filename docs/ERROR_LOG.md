@@ -94,3 +94,60 @@ Not covered by an automated test — Playwright's own browser context didn't rep
 
 ### Status
 RESOLVED
+
+---
+
+## ERROR-006
+
+### Symptom
+Immediately after `npx prisma migrate dev --name add_proctor_workflow` (adding the `CourseProctor` model for Milestone 5), running `npm run seed` — a brand-new `tsx` process, not a long-lived one — crashed with `TypeError: Cannot read properties of undefined (reading 'upsert')` at the first `db.courseProctor.upsert(...)` call.
+
+### Root Cause
+A sharper case of ERROR-002: that entry assumed `migrate dev` reliably regenerates `@prisma/client` for *fresh* processes and only stales out already-running ones. That's not what happened here — `db.courseProctor` was `undefined` even in a brand-new process, meaning `migrate dev` had not regenerated the client at all this time (adding a wholly new model, not just new columns on an existing one, may be what changed the behavior; not confirmed). Running `npx prisma generate` explicitly fixed it immediately.
+
+### Fix
+No code fix — same workflow discipline as ERROR-002, restated more strongly: **never assume `prisma migrate dev` regenerated the client — always run `npx prisma generate` explicitly right after, before running anything (seed script, tests, dev server) that imports `@prisma/client`.** Don't rely on "it usually does it automatically."
+
+### Regression Test
+Not applicable (workflow, not code).
+
+### Status
+RESOLVED (as a process discipline) — see ERROR-002 for the earlier, narrower version of this lesson.
+
+---
+
+## ERROR-007
+
+### Symptom
+Live E2E verification of Milestone 5's real proctor gate: a proctor approving a student's start request (confirmed in Postgres — `proctorApprovedAt` set within ~2s of the request) never unblocked the student. The page stayed on "Waiting for proctor approval…" forever — no error shown, no console output, no navigation — even minutes later.
+
+### Root Cause
+`ExamEntryGate.tsx`'s proctor-wait step polled `checkProctorApprovalAction` in a loop, guarded by a `cancelledRef` set to `true` in a `useEffect` cleanup so navigating away mid-poll wouldn't keep polling in the background. Next.js dev mode runs React in Strict Mode, which **double-invokes every effect on mount** (mount → cleanup → mount again) specifically to surface exactly this class of bug. That synthetic cleanup ran `cancelledRef.current = true` before the student ever clicked "Start Exam" — and since it's a ref (not state reset on remount), it stayed `true` for the rest of the component's real lifetime. The poll loop's `while (!approved && !cancelledRef.current)` condition was therefore false from the very first iteration, and `if (cancelledRef.current) return;` silently parked the UI on "proctor" step forever with no error path taken.
+
+### Fix
+Removed the `cancelledRef`/`useEffect` unmount guard entirely (`src/components/ExamEntryGate.tsx`) — it was speculative hardening the rest of this component never needed (nothing else in the gate sequence guards against unmounting either; a `router.push` after unmount is a harmless no-op). The poll loop now just runs `while (!approved)` until it either succeeds or the request itself throws.
+
+### Regression Test
+Not covered by a unit test — this is client-only React lifecycle behavior that only manifests under Strict Mode's double-invoke, which vitest's environment doesn't reproduce. Caught by `tests/e2e/exam-lifecycle.spec.ts`'s updated golden-path test, which now drives a real second proctor and would hang (and eventually time out) if this regressed. **General lesson for this codebase: a `useEffect` cleanup that flips a ref/flag meant to signal "the real unmount happened" is unsafe in dev — Strict Mode's synthetic double-invoke runs that same cleanup before any real unmount. Don't add unmount-cancellation guards speculatively; only add one if there's an actual bug it fixes, and if you do, verify it survives a Strict Mode double-invoke, not just a real unmount.**
+
+### Status
+RESOLVED
+
+---
+
+## ERROR-008
+
+### Symptom
+After fixing ERROR-007, live E2E verification still failed at the final step: the proctor's "Approve to finish" click (confirmed via a direct script call that `verifySubmission()` itself works correctly) never set `Submission.verifiedAt` for the test's own attempt.
+
+### Root Cause
+Not an application bug — a test-scoping bug. `Submission.verifiedAt` had never been set by any code path before this milestone, so **every historical SUBMITTED/GRADED attempt ever made against a course the demo proctor is assigned to** (accumulated across many prior live-verification sessions on this project) showed up in the proctor dashboard's "Waiting for your sign-off to finish" queue — 10 items at the time this was diagnosed, not 1. The test's `page.click('button:has-text("Approve to finish")')` used Playwright's legacy selector-string form, which (unlike a `locator(...).click()` chain) does not enforce strict mode and silently clicked the *first* matching button on the page — an old historical attempt, not the one this test run just submitted.
+
+### Fix
+Scoped both proctor-dashboard clicks in `tests/e2e/exam-lifecycle.spec.ts` to the specific `<li>` row for this run's unique exam title AND containing the specific button (`getByRole("listitem").filter({ hasText: examTitle }).filter({ has: button })`) instead of a bare `button:has-text(...)` selector. No application code changed — `verifySubmission()` and `approveProctorStart()` were correct the whole time.
+
+### Regression Test
+This *is* the regression test — `tests/e2e/exam-lifecycle.spec.ts` now passes reliably (verified 2/2 in a row) with the scoped selectors. **General lesson: once a queue/list can accumulate across sessions (as any proctor/review queue naturally will), an E2E test must never select "the button with this text" — it must select "the button in the row for this specific record," even the first time a feature is built, not just after a flake is observed.**
+
+### Status
+RESOLVED

@@ -21,6 +21,12 @@ export default async function DashboardPage({
     redirect("/admin");
   }
 
+  // Proctors act on queues (docs/PITCH_ROADMAP.md Milestone 5), not browse
+  // courses — the generic course-list dashboard below isn't their job here.
+  if (session.user.role === "PROCTOR") {
+    redirect("/proctor");
+  }
+
   if (!session.user.institutionId) {
     redirect("/login");
   }

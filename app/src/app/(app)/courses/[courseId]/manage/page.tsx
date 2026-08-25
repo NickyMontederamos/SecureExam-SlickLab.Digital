@@ -4,12 +4,14 @@ import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
 import {
   assignFaculty,
+  assignProctor,
   CourseHasContentError,
   CourseNotFoundError,
   deleteCourse,
   enrollStudent,
   getCourseWithRoster,
   unassignFaculty,
+  unassignProctor,
   unenrollStudent,
   updateCourse,
 } from "@/lib/courses";
@@ -46,8 +48,10 @@ export default async function ManageCoursePage({
 
   const allUsers = await listUsers(institutionId, session.user);
   const facultyUsers = allUsers.filter((u) => u.role === "FACULTY");
+  const proctorUsers = allUsers.filter((u) => u.role === "PROCTOR");
   const studentUsers = allUsers.filter((u) => u.role === "STUDENT");
   const assignedFacultyIds = new Set(course.faculty.map((f) => f.userId));
+  const assignedProctorIds = new Set(course.proctors.map((p) => p.userId));
   const enrolledStudentIds = new Set(course.enrollments.map((e) => e.userId));
   const canDelete = can(session.user.role, "course", "delete");
   const isEmpty = course._count.questions === 0 && course._count.exams === 0;
@@ -85,6 +89,30 @@ export default async function ManageCoursePage({
     const userId = String(formData.get("userId") ?? "");
     if (!userId) return;
     await unassignFaculty(authSession.user.institutionId, authSession.user, courseId, userId);
+    revalidatePath(`/courses/${courseId}/manage`);
+  }
+
+  async function assignProctorAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+    const userId = String(formData.get("userId") ?? "");
+    if (!userId) return;
+    await assignProctor(authSession.user.institutionId, authSession.user, courseId, userId);
+    revalidatePath(`/courses/${courseId}/manage`);
+  }
+
+  async function unassignProctorAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+    const userId = String(formData.get("userId") ?? "");
+    if (!userId) return;
+    await unassignProctor(authSession.user.institutionId, authSession.user, courseId, userId);
     revalidatePath(`/courses/${courseId}/manage`);
   }
 
@@ -225,6 +253,44 @@ export default async function ManageCoursePage({
         ) : (
           <p className="text-sm text-gray-500">
             No faculty accounts yet — <a href="/users" className="underline">add one</a> first.
+          </p>
+        )}
+      </section>
+
+      <section className="rounded border p-4">
+        <h2 className="mb-3 font-medium">Proctors ({course.proctors.length})</h2>
+        <ul className="mb-3 flex flex-col gap-1">
+          {course.proctors.map((p) => (
+            <li key={p.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
+              <span>
+                {p.user.name} ({p.user.email})
+              </span>
+              <form action={unassignProctorAction}>
+                <input type="hidden" name="userId" value={p.userId} />
+                <button type="submit" className="text-xs text-red-700 underline">
+                  Remove
+                </button>
+              </form>
+            </li>
+          ))}
+          {course.proctors.length === 0 && <li className="text-sm text-gray-500">No proctors assigned yet.</li>}
+        </ul>
+        {proctorUsers.length > 0 ? (
+          <form action={assignProctorAction} className="flex items-center gap-2">
+            <select name="userId" required className="flex-1 rounded border px-3 py-2 text-sm">
+              {proctorUsers.map((u) => (
+                <option key={u.id} value={u.id} disabled={assignedProctorIds.has(u.id)}>
+                  {u.name} ({u.email}) {assignedProctorIds.has(u.id) ? "— already assigned" : ""}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="rounded bg-black px-3 py-2 text-sm text-white">
+              Assign
+            </button>
+          </form>
+        ) : (
+          <p className="text-sm text-gray-500">
+            No proctor accounts yet — <a href="/users" className="underline">add one</a> first.
           </p>
         )}
       </section>

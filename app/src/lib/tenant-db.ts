@@ -10,6 +10,7 @@ const TENANT_SCOPED_MODELS = new Set([
   "User",
   "Course",
   "CourseFaculty",
+  "CourseProctor",
   "Enrollment",
   "Question",
   "Exam",

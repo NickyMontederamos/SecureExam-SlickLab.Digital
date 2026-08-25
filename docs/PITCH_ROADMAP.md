@@ -250,19 +250,97 @@ demo device can never derail a live pitch. All of it lives in
 
 ## Milestone 5 — A real proctor feature (supersedes the mocked gate)
 
-**Scoped 2026-08-26, not started.** Reverses part of Milestone 4's "fully mocked, no
-real proctor" call — see `NEXT_PHASE_PLAN.md` (repo root) for the full breakdown, open
-questions, and suggested opening move for the session that builds this. Short version:
-real student-selected scheduling, a real `PROCTOR`-facing dashboard showing booked
-attempts, a real (polling-based, not WebSocket) wait-for-approval gate replacing the
-scripted "Waiting for proctor…" delay, and a new post-submission proctor-approval step
-before a student sees their result — likely built on `Submission.verifiedAt`, an
-existing schema field that's never been set by any code path yet.
+**Built 2026-08-26.** Reverses part of Milestone 4's "fully mocked, no real proctor"
+call — see `NEXT_PHASE_PLAN.md` (repo root) for the original breakdown and open
+questions; all five were answered directly by the user before any code was written:
+time picker within the existing window (not faculty-defined slots), proctors assigned
+per course/exam via a new `CourseProctor` table (mirrors `CourseFaculty`), no proctor
+available blocks indefinitely (no timeout/escalation — matches Phase 1 having no
+staffing commitment yet), the student must stay on the result page until verified (not
+free to close the tab), and ~5s polling is fine (this app has no WebSocket/SSE
+infrastructure anywhere, so polling is the pattern-consistent choice).
 
-- [ ] Real scheduling (student picks a time, not just confirms one fixed window)
-- [ ] Proctor dashboard — booked/upcoming attempts, not just in-progress ones
-- [ ] Real wait-for-proctor-approval gate (replaces the scripted delay)
-- [ ] Post-submission proctor approval before the student sees their result
+- [x] **Real scheduling** — a `datetime-local` picker on the booking form, shown only
+      when the exam has a window, constrained via `min`/`max` to
+      `availableFrom`/`availableUntil`. Stored on the new `ExamAttempt.scheduledFor`;
+      server-side validated too (`ScheduledTimeOutOfWindowError` in `attempts.ts`), not
+      just a browser-enforced input attribute. Exams without a window keep the old
+      "book anytime" behavior unchanged — `scheduledFor` stays optional throughout.
+- [x] **Proctor dashboard** (`/proctor`, `src/lib/proctoring.ts`) — three queues, each
+      scoped to the proctor's `CourseProctor` assignments only, never institution-wide:
+      booked/upcoming attempts, requests waiting on approval to start, and submissions
+      waiting on approval to finish. `PROCTOR` is now redirected here from `/dashboard`
+      instead of the generic course-list view, which isn't its job.
+- [x] **Real wait-for-proctor-approval gate** — replaces the scripted "Waiting for
+      proctor…" delay in `ExamEntryGate.tsx`. The student's finished device/ID/room
+      steps call `requestProctorApproval()` (sets `ExamAttempt.proctorRequestedAt`),
+      then poll every 5s until a proctor calls `approveProctorStart()` (sets
+      `proctorApprovedAt`) from their dashboard. `beginBookedAttempt()` now refuses to
+      start the timer without `proctorApprovedAt` set — a new
+      `ProctorApprovalRequiredError`, the actual enforcement point (nothing stopped a
+      student from calling it directly before this).
+- [x] **Post-submission proctor approval** — the result page now checks
+      `Submission.verifiedAt` (existing field, never set by any code path before this)
+      for every non-`TERMINATED` attempt; unset shows a waiting screen with 5s polling
+      instead of the score. `verifySubmission()` in `proctoring.ts` sets it, scoped the
+      same way as the approval gate — a proctor can only verify attempts in courses
+      they're assigned to.
+
+  **Verified:** `npm run build`, `npx eslint .`, `npm test` (104/104 — added
+  `proctoring.test.ts` covering queue scoping by course assignment, the approval gate
+  refusing an unassigned proctor, `beginBookedAttempt` refusing without approval,
+  submission-verification scoping and idempotency, plus windowed-scheduling coverage
+  in `attempts.test.ts`), `npm run test:e2e` (updated the golden-path spec to drive a
+  second Playwright browser context as the seeded demo proctor — approving the start
+  request mid-gate and the finish request mid-wait — since nothing auto-approves
+  either step anymore). New demo account: `proctor@cmlaw.demo`, pre-assigned to LAW101
+  in `prisma/seed.ts`.
+
+## Milestone 5.5 — Faculty course/exam/grading management, easier
+
+**Built 2026-08-26**, same day as Milestone 5, on direct request: "proceed the faculty
+opportunity improvements and other fix like easy (course, exam and grading) management
+and more — assess it yourself." Self-assessed by reading every faculty-facing page
+(course manage, question bank, exam builder, grading list, grade-attempt) and picking
+the gaps that actually blocked "manage this easily," not a redesign.
+
+- [x] **Institution admins now have every faculty permission**, on direct instruction
+      ("admin also have faculty access") — course/exam/grading management, on top of
+      their existing admin-only permissions (institution/user/audit-log). An admin no
+      longer needs a separate faculty account to author or grade an exam. See
+      `rbac.ts` — kept as one explicit list per role, not a role-inheritance mechanism,
+      matching this file's existing "no implicit permission composition" style.
+- [x] **Exam edit, question removal, and exam delete — DRAFT only**: the exam builder
+      previously had no way to fix a typo'd title/time-limit, remove a wrongly-added
+      question, or delete a mis-created exam — only add-and-publish, one-way. All three
+      are safe unconditionally while DRAFT (a draft can never have a student attempt
+      against it, since booking/starting both require PUBLISHED), so none needed a
+      confirmation dialog beyond the existing plain-button style used elsewhere in this
+      app. Removing a question renumbers the rest so Q1/Q2/... never shows a gap.
+- [x] **Question bank edit/delete — unused questions only**: a question already
+      attached to an exam is append-only (master prompt §11's reasoning — a past exam
+      must keep the exact wording it was graded against), so edit/delete are only ever
+      offered for a question no exam has referenced yet (`QuestionInUseError` if
+      violated server-side, not just hidden client-side). The bank list now shows
+      "Used in an exam" instead of Edit/Delete for those.
+  - [x] Exam total points shown next to the question count, not just per-question.
+- [x] **Grading is actually readable now**: the grade-attempt page previously showed
+      every response as a raw `JSON.stringify()` dump — an essay answer read as
+      `{"text":"..."}`, and a multiple-choice answer as `{"choiceIds":["2"]}` instead of
+      the choice text. Both now render as plain, readable text.
+  - [x] Grading list: pending-count chips read "X of Y question(s) pending" (was a bare
+        number with no context — the exact live-testing complaint this addresses), plus
+        a submission-level summary line ("N of M submissions still need grading").
+  - [x] Grade-attempt page: a pending-count line under the status header, so a grader
+        doesn't have to scroll the whole exam to see how much is left.
+
+  **Verified:** `npm run build`, `npx eslint .`, `npm test` (112/112 — added coverage
+  in `exams.test.ts` for `updateExam`/`removeExamQuestion`/`deleteExam` including the
+  "refuses once published" cases and the renumber-after-removal behavior,
+  `questions.test.ts` for `updateQuestion`/`deleteQuestion` including
+  `QuestionInUseError`, and `rbac.test.ts` for the admin/faculty permission merge),
+  `npm run test:e2e` (4/4, confirming the existing faculty create/publish and full
+  proctor-gate flows are unaffected by the additions).
 
 ---
 
@@ -289,6 +367,11 @@ Milestones 1–4, or as a fast-follow after a successful pitch:
       needs a provider decision first).
 - [ ] Configurable retake/attempt limits (currently hard-enforced at exactly one
       attempt via a DB constraint — a real schema change, not a toggle).
+- [x] Grading list visibility — flagged during live testing of Milestone 5
+      (2026-08-26), fixed the same day as part of the faculty-management pass below:
+      pending-count chips now read "X of Y question(s) pending" (was a bare number
+      with no context), plus a submission-level summary line at the top of the
+      grading list ("N of M submissions still need grading").
 
 ---
 

@@ -64,6 +64,17 @@ export default async function ExamGradingPage({ params }: { params: Promise<{ ex
 
       <section className="flex flex-col gap-2">
         {attempts.length === 0 && <p className="text-sm text-gray-500">No submissions yet.</p>}
+        {attempts.length > 0 && (() => {
+          const gradedCount = attempts.filter((a) => a.status === "GRADED").length;
+          const pendingAttemptCount = attempts.length - gradedCount;
+          return pendingAttemptCount > 0 ? (
+            <p className="text-sm text-amber-700">
+              {pendingAttemptCount} of {attempts.length} submission(s) still need grading.
+            </p>
+          ) : (
+            <p className="text-sm text-green-700">All {attempts.length} submission(s) fully graded.</p>
+          );
+        })()}
         {attempts.map((attempt) => {
           const pendingCount = attempt.answers.filter((a) => a.pointsAwarded === null).length;
           const isTerminated = attempt.status === "TERMINATED";
@@ -76,7 +87,7 @@ export default async function ExamGradingPage({ params }: { params: Promise<{ ex
               <span>{attempt.student.name}</span>
               <span
                 className={
-                  "rounded px-2 py-0.5 text-xs " +
+                  "rounded px-2 py-0.5 text-xs font-medium " +
                   (isTerminated
                     ? "bg-red-100 text-red-800"
                     : attempt.status === "GRADED"
@@ -84,7 +95,11 @@ export default async function ExamGradingPage({ params }: { params: Promise<{ ex
                       : "bg-amber-100 text-amber-800")
                 }
               >
-                {isTerminated ? "Terminated" : attempt.status === "GRADED" ? "Graded" : `${pendingCount} pending`}
+                {isTerminated
+                  ? "Terminated"
+                  : attempt.status === "GRADED"
+                    ? "Graded"
+                    : `${pendingCount} of ${attempt.answers.length} question(s) pending`}
               </span>
             </a>
           );

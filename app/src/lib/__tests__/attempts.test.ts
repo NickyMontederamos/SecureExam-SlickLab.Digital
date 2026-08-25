@@ -7,6 +7,8 @@ import {
   AttemptNotFoundError,
   AttemptOwnershipError,
   NotEnrolledError,
+  ProctorApprovalRequiredError,
+  ScheduledTimeOutOfWindowError,
   beginBookedAttempt,
   bookAttempt,
   getAttemptForTaking,
@@ -15,6 +17,7 @@ import {
   startAttempt,
   submitAttempt,
 } from "../attempts";
+import { approveProctorStart } from "../proctoring";
 import { gradeAnswer, listAttemptsForExam } from "../grading";
 
 describe("exam attempts (start / save / submit / grade)", () => {
@@ -233,8 +236,12 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
   let institutionA: { id: string };
   let courseA: { id: string };
   let faculty: { id: string };
+  let proctor: { id: string };
   let student: { id: string };
   let examId: string;
+  let windowedExamId: string;
+  let windowFrom: Date;
+  let windowUntil: Date;
 
   beforeAll(async () => {
     const platform = forPlatform();
@@ -247,10 +254,14 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
     faculty = await platform.user.create({
       data: { institutionId: institutionA.id, email: `booking-faculty-${runId}@test.local`, name: "Faculty", role: "FACULTY", passwordHash: "x" },
     });
+    proctor = await platform.user.create({
+      data: { institutionId: institutionA.id, email: `booking-proctor-${runId}@test.local`, name: "Proctor", role: "PROCTOR", passwordHash: "x" },
+    });
     student = await platform.user.create({
       data: { institutionId: institutionA.id, email: `booking-student-${runId}@test.local`, name: "Student", role: "STUDENT", passwordHash: "x" },
     });
     await platform.enrollment.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: student.id } });
+    await platform.courseProctor.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: proctor.id } });
 
     const { exam } = await createExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, {
       courseId: courseA.id,
@@ -269,6 +280,19 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
     });
     await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId, questionId: question.id, points: 1 });
     await publishExam(institutionA.id, { role: "FACULTY" }, examId);
+
+    windowFrom = new Date(Date.now() + 60 * 60 * 1000);
+    windowUntil = new Date(Date.now() + 4 * 60 * 60 * 1000);
+    const { exam: windowedExam } = await createExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, {
+      courseId: courseA.id,
+      title: "Windowed Booking Exam",
+      timeLimitMinutes: 30,
+      availableFrom: windowFrom,
+      availableUntil: windowUntil,
+    });
+    windowedExamId = windowedExam.id;
+    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: windowedExamId, questionId: question.id, points: 1 });
+    await publishExam(institutionA.id, { role: "FACULTY" }, windowedExamId);
   });
 
   afterAll(async () => {
@@ -282,6 +306,7 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
     await platform.exam.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseProctor.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: institutionA.id } });
@@ -305,9 +330,31 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
     ).rejects.toThrow(AttemptNotFoundError);
   });
 
-  it("begins a booked attempt (starts the timer), and resuming afterward is a no-op", async () => {
+  it("refuses a scheduled time outside the exam's booking window", async () => {
+    const tooEarly = new Date(windowFrom.getTime() - 60 * 60 * 1000);
+    await expect(
+      bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, windowedExamId, tooEarly)
+    ).rejects.toThrow(ScheduledTimeOutOfWindowError);
+  });
+
+  it("books a windowed exam at a time inside the window", async () => {
+    const insideWindow = new Date(windowFrom.getTime() + 30 * 60 * 1000);
+    const booked = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, windowedExamId, insideWindow);
+    expect(booked.scheduledFor?.getTime()).toBe(insideWindow.getTime());
+  });
+
+  it("refuses to begin a booked attempt until a proctor approves it", async () => {
+    const booked = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
+    await expect(
+      beginBookedAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, booked.id)
+    ).rejects.toThrow(ProctorApprovalRequiredError);
+  });
+
+  it("begins a booked attempt once approved (starts the timer), and resuming afterward is a no-op", async () => {
     const booked = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
     expect(booked.status).toBe("NOT_STARTED");
+
+    await approveProctorStart(institutionA.id, { id: proctor.id, role: "PROCTOR" }, booked.id);
 
     const begun = await beginBookedAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, booked.id);
     expect(begun.status).toBe("IN_PROGRESS");

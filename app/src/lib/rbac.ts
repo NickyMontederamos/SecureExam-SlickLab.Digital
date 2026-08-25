@@ -18,7 +18,7 @@ export type Resource =
   | "grade"
   | "audit_log";
 
-export type Action = "create" | "read" | "update" | "delete" | "publish" | "grade" | "take";
+export type Action = "create" | "read" | "update" | "delete" | "publish" | "grade" | "take" | "approve";
 
 type PermissionMatrix = Record<Role, Partial<Record<Resource, Action[]>>>;
 
@@ -38,25 +38,31 @@ const PERMISSIONS: PermissionMatrix = {
     user: ["create", "read", "update"],
     audit_log: ["read"],
   },
+  // Institution admins get everything FACULTY has (course/exam/grading
+  // management) on top of their own admin-only permissions — an admin
+  // should never need a separate faculty account just to author an exam or
+  // grade a submission. Keep the two lists in sync: any addition to
+  // FACULTY's resource actions probably belongs here too.
   INSTITUTION_ADMIN: {
     institution: ["read", "update"],
     user: ["create", "read", "update", "delete"],
     course: ["create", "read", "update", "delete"],
-    question: ["read"],
-    exam: ["read", "publish"],
+    question: ["create", "read", "update", "delete"],
+    exam: ["create", "read", "update", "delete", "publish"],
     exam_attempt: ["read"],
-    grade: ["read"],
+    grade: ["read", "grade"],
     audit_log: ["read"],
   },
   FACULTY: {
     course: ["read"],
     question: ["create", "read", "update", "delete"],
-    exam: ["create", "read", "update", "publish"],
+    exam: ["create", "read", "update", "delete", "publish"],
     exam_attempt: ["read"],
     grade: ["read", "grade"],
   },
   PROCTOR: {
-    exam_attempt: ["read"],
+    course: ["read"],
+    exam_attempt: ["read", "approve"],
   },
   STUDENT: {
     course: ["read"],

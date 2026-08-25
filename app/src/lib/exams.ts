@@ -40,6 +40,13 @@ export class EmptyExamError extends Error {
   }
 }
 
+export class ExamQuestionNotFoundError extends Error {
+  constructor(examQuestionId: string) {
+    super(`Question ${examQuestionId} is not on this exam`);
+    this.name = "ExamQuestionNotFoundError";
+  }
+}
+
 export interface CreateExamInput {
   courseId: string;
   title: string;
@@ -240,6 +247,121 @@ export async function addExamQuestions(institutionId: string, actor: { role: Rol
       });
     })
   );
+}
+
+export interface UpdateExamInput {
+  title: string;
+  timeLimitMinutes: number;
+  instructions?: string;
+  availableFrom?: Date;
+  availableUntil?: Date;
+}
+
+/** Edits an exam's title and its active version's settings — DRAFT only, same editability rule as adding questions. */
+export async function updateExam(institutionId: string, actor: { role: Role }, examId: string, input: UpdateExamInput) {
+  assertCan(actor.role, "exam", "update");
+
+  const db = forTenant(institutionId);
+
+  const exam = await db.exam.findFirst({
+    where: { id: examId },
+    include: { versions: { where: { isActive: true }, take: 1 } },
+  });
+  if (!exam) {
+    throw new ExamNotFoundError(examId);
+  }
+  if (exam.status !== "DRAFT") {
+    throw new ExamNotEditableError(examId);
+  }
+  const activeVersion = exam.versions[0];
+  if (!activeVersion) {
+    throw new ExamNotEditableError(examId);
+  }
+
+  const [updatedExam] = await db.$transaction([
+    db.exam.update({ where: { id: examId }, data: { title: input.title } }),
+    db.examVersion.update({
+      where: { id: activeVersion.id },
+      data: {
+        timeLimitMinutes: input.timeLimitMinutes,
+        instructions: input.instructions,
+        availableFrom: input.availableFrom ?? null,
+        availableUntil: input.availableUntil ?? null,
+      },
+    }),
+  ]);
+
+  return updatedExam;
+}
+
+/**
+ * Detaches one question from the exam's active version — DRAFT only, same
+ * as adding one. Renumbers the remaining questions' `order` so the
+ * displayed Q1/Q2/... never has a gap.
+ */
+export async function removeExamQuestion(institutionId: string, actor: { role: Role }, examId: string, examQuestionId: string) {
+  assertCan(actor.role, "exam", "update");
+
+  const db = forTenant(institutionId);
+
+  const exam = await db.exam.findFirst({
+    where: { id: examId },
+    include: { versions: { where: { isActive: true }, take: 1 } },
+  });
+  if (!exam) {
+    throw new ExamNotFoundError(examId);
+  }
+  if (exam.status !== "DRAFT") {
+    throw new ExamNotEditableError(examId);
+  }
+  const activeVersion = exam.versions[0];
+  if (!activeVersion) {
+    throw new ExamNotEditableError(examId);
+  }
+
+  const examQuestion = await db.examQuestion.findFirst({ where: { id: examQuestionId, examVersionId: activeVersion.id } });
+  if (!examQuestion) {
+    throw new ExamQuestionNotFoundError(examQuestionId);
+  }
+
+  await db.examQuestion.delete({ where: { id: examQuestionId } });
+
+  const remaining = await db.examQuestion.findMany({
+    where: { examVersionId: activeVersion.id },
+    orderBy: { order: "asc" },
+  });
+  await db.$transaction(
+    remaining
+      .map((eq, index) => ({ eq, index }))
+      .filter(({ eq, index }) => eq.order !== index)
+      .map(({ eq, index }) => db.examQuestion.update({ where: { id: eq.id }, data: { order: index } }))
+  );
+}
+
+/**
+ * Deletes a DRAFT exam outright, questions and all. Safe unconditionally —
+ * a DRAFT exam can never have a student attempt against it (booking/starting
+ * both require PUBLISHED), so there's nothing downstream to protect, unlike
+ * deleteCourse's content check in courses.ts.
+ */
+export async function deleteExam(institutionId: string, actor: { role: Role }, examId: string) {
+  assertCan(actor.role, "exam", "delete");
+
+  const db = forTenant(institutionId);
+
+  const exam = await db.exam.findFirst({ where: { id: examId } });
+  if (!exam) {
+    throw new ExamNotFoundError(examId);
+  }
+  if (exam.status !== "DRAFT") {
+    throw new ExamNotEditableError(examId);
+  }
+
+  await db.$transaction([
+    db.examQuestion.deleteMany({ where: { examVersion: { examId } } }),
+    db.examVersion.deleteMany({ where: { examId } }),
+    db.exam.delete({ where: { id: examId } }),
+  ]);
 }
 
 /** Freezes the active version and marks the exam PUBLISHED. Irreversible in Phase 1 — no unpublish. */

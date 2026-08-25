@@ -6,13 +6,17 @@ import {
   addExamQuestion,
   addExamQuestions,
   createExam,
+  deleteExam,
   EmptyExamError,
   ExamNotEditableError,
   ExamNotFoundError,
+  ExamQuestionNotFoundError,
   getExam,
   listExamsForCourse,
   publishExam,
   QuestionNotFoundError,
+  removeExamQuestion,
+  updateExam,
 } from "../exams";
 
 describe("exam builder (createExam / addExamQuestion / publishExam)", () => {
@@ -190,5 +194,112 @@ describe("exam builder (createExam / addExamQuestion / publishExam)", () => {
     await expect(
       createExam(institutionA.id, { id: facultyA.id, role: "STUDENT" }, { courseId: courseA.id, title: "Nope", timeLimitMinutes: 30 })
     ).rejects.toThrow(ForbiddenError);
+  });
+
+  it("edits a draft exam's title and time limit, but refuses once published", async () => {
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Original Title", timeLimitMinutes: 30 }
+    );
+
+    const updated = await updateExam(institutionA.id, { role: "FACULTY" }, exam.id, {
+      title: "Renamed Title",
+      timeLimitMinutes: 45,
+    });
+    expect(updated.title).toBe("Renamed Title");
+
+    const fetched = await getExam(institutionA.id, { role: "FACULTY" }, exam.id);
+    expect(fetched.versions[0].timeLimitMinutes).toBe(45);
+
+    const { question } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Edit-then-publish question", points: 1 }
+    );
+    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: question.id, points: 1 });
+    await publishExam(institutionA.id, { role: "FACULTY" }, exam.id);
+
+    await expect(
+      updateExam(institutionA.id, { role: "FACULTY" }, exam.id, { title: "Too Late", timeLimitMinutes: 60 })
+    ).rejects.toThrow(ExamNotEditableError);
+  });
+
+  it("removes a question from a draft exam and renumbers the rest, but refuses once published", async () => {
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Remove Question Exam", timeLimitMinutes: 60 }
+    );
+    const { question: q1 } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Keep me", points: 1 }
+    );
+    const { question: q2 } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Remove me", points: 1 }
+    );
+    const { question: q3 } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Keep me too", points: 1 }
+    );
+
+    const eq1 = await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: q1.id, points: 1 });
+    const eq2 = await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: q2.id, points: 1 });
+    const eq3 = await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: q3.id, points: 1 });
+    expect([eq1.order, eq2.order, eq3.order]).toEqual([0, 1, 2]);
+
+    await removeExamQuestion(institutionA.id, { role: "FACULTY" }, exam.id, eq2.id);
+
+    const fetched = await getExam(institutionA.id, { role: "FACULTY" }, exam.id);
+    const remaining = fetched.versions[0].examQuestions;
+    expect(remaining).toHaveLength(2);
+    // No gap left behind — the second surviving question renumbers down to order 1.
+    expect(remaining.map((eq) => eq.order).sort()).toEqual([0, 1]);
+    expect(remaining.some((eq) => eq.id === eq2.id)).toBe(false);
+
+    await publishExam(institutionA.id, { role: "FACULTY" }, exam.id);
+    await expect(
+      removeExamQuestion(institutionA.id, { role: "FACULTY" }, exam.id, eq1.id)
+    ).rejects.toThrow(ExamNotEditableError);
+  });
+
+  it("refuses to remove a question id that isn't on the exam", async () => {
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Bogus Remove Exam", timeLimitMinutes: 60 }
+    );
+    await expect(
+      removeExamQuestion(institutionA.id, { role: "FACULTY" }, exam.id, "not-a-real-exam-question-id")
+    ).rejects.toThrow(ExamQuestionNotFoundError);
+  });
+
+  it("deletes a draft exam outright, but refuses once published", async () => {
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Delete Me Draft", timeLimitMinutes: 60 }
+    );
+    await deleteExam(institutionA.id, { role: "FACULTY" }, exam.id);
+    await expect(getExam(institutionA.id, { role: "FACULTY" }, exam.id)).rejects.toThrow(ExamNotFoundError);
+
+    const { exam: publishedExam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Delete Me Published", timeLimitMinutes: 60 }
+    );
+    const { question } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Blocks deletion", points: 1 }
+    );
+    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: publishedExam.id, questionId: question.id, points: 1 });
+    await publishExam(institutionA.id, { role: "FACULTY" }, publishedExam.id);
+
+    await expect(deleteExam(institutionA.id, { role: "FACULTY" }, publishedExam.id)).rejects.toThrow(ExamNotEditableError);
   });
 });

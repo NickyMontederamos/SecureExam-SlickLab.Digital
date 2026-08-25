@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { AttemptNotFoundError, AttemptOwnershipError, getAttemptResult } from "@/lib/attempts";
+import { AutoRefresh } from "@/components/AutoRefresh";
 
 export default async function AttemptResultPage({
   params,
@@ -29,6 +30,29 @@ export default async function AttemptResultPage({
       redirect("/dashboard");
     }
     throw error;
+  }
+
+  // Real "approve to finish" step (docs/PITCH_ROADMAP.md Milestone 5): a
+  // student who wasn't terminated for an integrity violation sees their
+  // result only once a proctor verifies the submission. TERMINATED attempts
+  // never get a Submission row (see resolveIntegrityReview in integrity.ts)
+  // and skip this gate entirely — that result is shown immediately below.
+  if (result.attempt.status !== "TERMINATED" && !result.attempt.submission?.verifiedAt) {
+    return (
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
+        <AutoRefresh intervalMs={5000} />
+        <div>
+          <a href="/dashboard" className="text-sm text-gray-500">
+            ← Dashboard
+          </a>
+          <h1 className="text-xl font-semibold">{result.attempt.examVersion.exam.title}</h1>
+        </div>
+        <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+          Your exam has been submitted. Waiting for your proctor to approve closing out your session — this page
+          updates automatically once that happens.
+        </p>
+      </main>
+    );
   }
 
   return (

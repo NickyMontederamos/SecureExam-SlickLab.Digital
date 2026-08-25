@@ -1,7 +1,16 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ForbiddenError } from "../rbac";
 import { forPlatform } from "../tenant-db";
-import { CourseNotFoundError, createQuestion, listQuestionsForCourse } from "../questions";
+import { addExamQuestion, createExam } from "../exams";
+import {
+  CourseNotFoundError,
+  createQuestion,
+  deleteQuestion,
+  listQuestionsForCourse,
+  QuestionInUseError,
+  QuestionNotFoundError,
+  updateQuestion,
+} from "../questions";
 
 describe("question bank (createQuestion / listQuestionsForCourse)", () => {
   const runId = Math.random().toString(36).slice(2, 10);
@@ -38,6 +47,9 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
 
   afterAll(async () => {
     const platform = forPlatform();
+    await platform.examQuestion.deleteMany({ where: { examVersion: { exam: { institutionId: institutionA.id } } } });
+    await platform.examVersion.deleteMany({ where: { exam: { institutionId: institutionA.id } } });
+    await platform.exam.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
@@ -99,5 +111,46 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
         }
       )
     ).rejects.toThrow(ForbiddenError);
+  });
+
+  it("edits an unused question's prompt/points in place, but refuses once it's attached to an exam", async () => {
+    const { question } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Original prompt", points: 1 }
+    );
+
+    const updated = await updateQuestion(institutionA.id, { role: "FACULTY" }, question.id, {
+      prompt: "Edited prompt",
+      points: 3,
+    });
+    expect(updated.prompt).toBe("Edited prompt");
+    expect(updated.points).toBe(3);
+
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Locks The Question", timeLimitMinutes: 30 }
+    );
+    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: question.id, points: 3 });
+
+    await expect(
+      updateQuestion(institutionA.id, { role: "FACULTY" }, question.id, { prompt: "Too late", points: 3 })
+    ).rejects.toThrow(QuestionInUseError);
+    await expect(deleteQuestion(institutionA.id, { role: "FACULTY" }, question.id)).rejects.toThrow(QuestionInUseError);
+  });
+
+  it("deletes an unused question outright", async () => {
+    const { question } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "ESSAY", prompt: "Delete me", points: 5 }
+    );
+
+    await deleteQuestion(institutionA.id, { role: "FACULTY" }, question.id);
+
+    await expect(
+      updateQuestion(institutionA.id, { role: "FACULTY" }, question.id, { prompt: "Gone", points: 1 })
+    ).rejects.toThrow(QuestionNotFoundError);
   });
 });

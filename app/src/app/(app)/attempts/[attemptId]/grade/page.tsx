@@ -1,9 +1,27 @@
+import type { QuestionType } from "@prisma/client";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { AttemptNotFoundError, getAttemptForTaking } from "@/lib/attempts";
 import { gradeAnswer } from "@/lib/grading";
 import { can, ForbiddenError } from "@/lib/rbac";
+
+type AnswerShape = { choiceIds?: string[]; text?: string };
+
+/** Turns a raw ExamAnswer.responseJson into something a grader can actually read — choice text for MC/MR/TF, plain text for short-answer/essay, never a raw JSON dump. */
+function formatResponse(questionType: QuestionType, choices: unknown, responseJson: unknown): string {
+  if (!responseJson) return "(no answer)";
+  const response = responseJson as AnswerShape;
+
+  if (questionType === "SHORT_ANSWER" || questionType === "ESSAY") {
+    return response.text?.trim() || "(no answer)";
+  }
+
+  const choiceList = (choices as { id: string; text: string }[] | null) ?? [];
+  const selectedIds = response.choiceIds ?? [];
+  if (selectedIds.length === 0) return "(no answer)";
+  return selectedIds.map((id) => choiceList.find((c) => c.id === id)?.text ?? id).join(", ");
+}
 
 export default async function GradeAttemptPage({ params }: { params: Promise<{ attemptId: string }> }) {
   const session = await auth();
@@ -33,6 +51,11 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
 
   const answersByQuestion = new Map(attempt.answers.map((a) => [a.examQuestionId, a]));
   const canGrade = can(session.user.role, "grade", "grade");
+  const pendingCount = attempt.examVersion.examQuestions.filter((eq) => {
+    if (eq.question.type !== "ESSAY" && eq.question.type !== "SHORT_ANSWER") return false;
+    const a = answersByQuestion.get(eq.id);
+    return !a || a.pointsAwarded === null;
+  }).length;
 
   async function gradeAction(formData: FormData) {
     "use server";
@@ -56,13 +79,16 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
           ← Grading
         </a>
         <h1 className="text-xl font-semibold">Grading: {attempt.examVersion.exam.title}</h1>
-        <p className="text-sm text-gray-500">Status: {attempt.status}</p>
+        <p className="text-sm text-gray-500">
+          Status: {attempt.status}
+          {pendingCount > 0 && <span className="ml-2 text-amber-700">· {pendingCount} question(s) still pending</span>}
+        </p>
       </div>
 
       <section className="flex flex-col gap-3">
         {attempt.examVersion.examQuestions.map((eq, i) => {
           const answer = answersByQuestion.get(eq.id);
-          const responseText = answer?.responseJson ? JSON.stringify(answer.responseJson) : "(no answer)";
+          const responseText = formatResponse(eq.question.type, eq.questionVersion.choices, answer?.responseJson);
           const isManual = eq.question.type === "ESSAY" || eq.question.type === "SHORT_ANSWER";
 
           return (

@@ -69,6 +69,18 @@ async function main() {
     },
   });
 
+  const proctor = await db.user.upsert({
+    where: { email: "proctor@cmlaw.demo" },
+    update: {},
+    create: {
+      institutionId: institution.id,
+      email: "proctor@cmlaw.demo",
+      name: "Demo Proctor",
+      role: "PROCTOR",
+      passwordHash,
+    },
+  });
+
   const student = await db.user.upsert({
     where: { email: "student@cmlaw.demo" },
     update: {},
@@ -104,6 +116,12 @@ async function main() {
     create: { institutionId: institution.id, courseId: course.id, userId: faculty.id },
   });
 
+  await db.courseProctor.upsert({
+    where: { courseId_userId: { courseId: course.id, userId: proctor.id } },
+    update: {},
+    create: { institutionId: institution.id, courseId: course.id, userId: proctor.id },
+  });
+
   await db.enrollment.upsert({
     where: { courseId_userId: { courseId: course.id, userId: student.id } },
     update: {},
@@ -116,6 +134,7 @@ async function main() {
   console.log(`  superadmin@cmlaw.demo (SUPER_ADMIN)`);
   console.log(`  admin@cmlaw.demo      (INSTITUTION_ADMIN)`);
   console.log(`  faculty@cmlaw.demo    (FACULTY)`);
+  console.log(`  proctor@cmlaw.demo    (PROCTOR)`);
   console.log(`  student@cmlaw.demo    (STUDENT)`);
   console.log(`Admin id: ${admin.id}`);
 }

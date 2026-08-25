@@ -31,8 +31,31 @@ describe("rbac permission matrix", () => {
     expect(() => assertCan("INSTITUTION_ADMIN", "user", "create")).not.toThrow();
   });
 
-  it("proctors are read-only on exam attempts and cannot grade", () => {
+  it("proctors can read and approve exam attempts but cannot grade", () => {
     expect(can("PROCTOR", "exam_attempt", "read")).toBe(true);
+    expect(can("PROCTOR", "exam_attempt", "approve")).toBe(true);
     expect(can("PROCTOR", "grade", "grade")).toBe(false);
+  });
+
+  it("only proctors can approve exam attempts", () => {
+    expect(can("FACULTY", "exam_attempt", "approve")).toBe(false);
+    expect(can("STUDENT", "exam_attempt", "approve")).toBe(false);
+  });
+
+  it("institution admins have every faculty permission (course/exam/grading management) on top of their own", () => {
+    expect(can("INSTITUTION_ADMIN", "question", "create")).toBe(true);
+    expect(can("INSTITUTION_ADMIN", "question", "update")).toBe(true);
+    expect(can("INSTITUTION_ADMIN", "question", "delete")).toBe(true);
+    expect(can("INSTITUTION_ADMIN", "exam", "create")).toBe(true);
+    expect(can("INSTITUTION_ADMIN", "exam", "update")).toBe(true);
+    expect(can("INSTITUTION_ADMIN", "exam", "delete")).toBe(true);
+    expect(can("INSTITUTION_ADMIN", "grade", "grade")).toBe(true);
+    // Still keeps its own admin-only permissions faculty doesn't have.
+    expect(can("INSTITUTION_ADMIN", "user", "delete")).toBe(true);
+    expect(can("FACULTY", "user", "delete")).toBe(false);
+  });
+
+  it("faculty can now delete a draft exam (not just create/update/publish)", () => {
+    expect(can("FACULTY", "exam", "delete")).toBe(true);
   });
 });

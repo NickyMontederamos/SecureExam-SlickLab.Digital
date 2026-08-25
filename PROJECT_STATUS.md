@@ -64,6 +64,7 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 2026-08-25 — `npm run build` (pass), `npx eslint .` (pass), `npm test` (81/81 pass), `npm run test:e2e` (4/4 pass), plus live browser walkthroughs of: the complete exam lifecycle (both grading paths), a rate-limit test, a cross-tenant attack simulation, institution onboarding, the full admin console including edit/delete/roster-removal and user activate/deactivate/password-reset (all verified live). Three real bugs found and fixed this session (ERROR-001, ERROR-002, ERROR-003), plus a fourth caught before any user hit it (the admin grading-page ForbiddenError) — all found by actually running the thing, none by the type checker or a passing build alone.
 
 ## Next Priority
+0. **See `NEXT_PHASE_PLAN.md`** — ownership/for-sale watermarking (all pages) + a shared app header with institution logo placement, scoped and ready to build in a fresh session.
 1. Content-Security-Policy via nonce-based middleware (deferred — see `docs/SECURITY.md`).
 2. Expand the Playwright E2E suite beyond the one golden-path spec (institution onboarding, admin console, essay grading path).
 3. Basic analytics (score distributions, per-question difficulty) — master prompt §22, not started.

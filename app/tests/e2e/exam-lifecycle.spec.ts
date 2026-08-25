@@ -45,8 +45,16 @@ test.describe.serial("full exam lifecycle", () => {
     await page.selectOption('select[name="questionId"]', { label: `[MULTIPLE_CHOICE] ${questionPrompt}` });
     await page.fill('input[name="points"]', "1");
     await page.click('button:has-text("Add to exam")');
+    // Wait for the add-question server action's re-render to actually land
+    // before publishing — clicking "Publish" immediately after "Add to
+    // exam" raced ahead of it in testing (Next.js dev-mode server action
+    // re-renders aren't always synchronous from Playwright's click()
+    // perspective), leaving the exam published with zero questions
+    // attached. This assertion is the fix, not a workaround for an app bug
+    // — publishExam() already rejects an empty exam (see exams.test.ts).
+    await expect(page.getByText("Questions (1)")).toBeVisible();
     await page.click('button:has-text("Publish exam")');
-    await expect(page.getByText("PUBLISHED")).toBeVisible();
+    await expect(page.getByText("PUBLISHED", { exact: true })).toBeVisible();
   });
 
   test("student takes the exam and sees an auto-graded result", async ({ page }) => {

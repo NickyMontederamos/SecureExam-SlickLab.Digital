@@ -51,11 +51,16 @@ Verified with a passing automated test or a manual browser check against the rea
 - Tenant isolation (8 integration tests).
 - Password hashing/verification (3 unit tests).
 - RBAC permission matrix (8 unit tests).
-- Login (correct and incorrect password), session carrying role + institutionId, tenant-scoped course listing rendering correctly, audit log rows written for both outcomes — all checked live in a browser against the real dev server and database.
+- Question bank: atomic question+version creation, listing, tenant-isolation on courseId, RBAC enforcement (4 integration tests, plus a full live browser run as faculty).
+- Login (correct and incorrect password), session carrying role + institutionId + **id** (see ERROR-001 in `ERROR_LOG.md` — this was missing until caught by live testing), tenant-scoped course listing rendering correctly, institution branding rendering, audit log rows written for both outcomes — all checked live in a browser against the real dev server and database.
 - Production build + typecheck + lint all pass.
 
 UNVALIDATED (not yet built, so not yet tested):
-- Institution/user/course/question/exam CRUD UI and API beyond the one read-only `/api/courses` example.
+- Institution/user/course/exam CRUD UI and API beyond the read-only `/api/courses` example and the question bank.
 - Exam builder, versioning, randomization, scheduling.
 - Grading, results, analytics.
 - Everything in Phase 2 (offline client, lockdown, encrypted packages, crash recovery).
+
+## Lesson from ERROR-001
+
+`npm run build` passing (including the TypeScript check) did not catch the missing `session.user.id` bug — the types were technically satisfied because `session.user.id` is optional in Auth.js's default types, so `undefined` was a valid value as far as the compiler was concerned. Only a live browser run through the actual create-question flow surfaced it. This is why `PROJECT_STATUS.md` and this file distinguish "has a passing test" from "builds cleanly" — a clean build is necessary but not sufficient evidence a feature works.

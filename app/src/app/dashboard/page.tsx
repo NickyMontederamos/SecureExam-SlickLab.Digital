@@ -53,7 +53,9 @@ export default async function DashboardPage() {
         <ul className="flex flex-col gap-1">
           {courses.map((course) => (
             <li key={course.id} className="rounded border px-3 py-2 text-sm">
-              {course.code} — {course.name} ({course.academicYear})
+              <a href={`/courses/${course.id}/questions`} className="hover:underline">
+                {course.code} — {course.name} ({course.academicYear})
+              </a>
             </li>
           ))}
           {courses.length === 0 && <li className="text-sm text-gray-500">No courses yet.</li>}

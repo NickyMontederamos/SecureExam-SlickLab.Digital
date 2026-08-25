@@ -84,6 +84,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     session({ session, token }) {
       if (session.user && token.role) {
+        // token.sub is the JWT subject, set to authorize()'s returned
+        // user.id — the default Auth.js session shape doesn't carry it
+        // through automatically once this callback is overridden.
+        if (token.sub) {
+          session.user.id = token.sub;
+        }
         session.user.role = token.role;
         session.user.institutionId = token.institutionId ?? null;
       }

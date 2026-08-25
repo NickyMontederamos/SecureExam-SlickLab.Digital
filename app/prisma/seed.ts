@@ -12,12 +12,21 @@ import { hashPassword } from "../src/lib/password";
 async function main() {
   const db = forPlatform();
 
+  const branding = {
+    logoUrl: "/branding/college-of-law-logo.jpg",
+    sealUrl: "/branding/college-of-maasin-logo.jpg",
+    // Sampled from the provided institution logos.
+    primaryColor: "#6B2A8C",
+    secondaryColor: "#1F6F4A",
+  };
+
   const institution = await db.institution.upsert({
     where: { slug: "college-of-maasin-law" },
-    update: {},
+    update: branding,
     create: {
       name: "College of Maasin — College of Law",
       slug: "college-of-maasin-law",
+      ...branding,
     },
   });
 

@@ -54,6 +54,13 @@ model Institution {
   id        String   @id @default(cuid())
   name      String
   slug      String   @unique
+  /// Institution branding (master prompt §10). Logo paths are relative to
+  /// /public — fine for a single-deployment Phase 1 pitch demo; will need
+  /// to move to real object storage once institutions self-serve upload.
+  logoUrl         String?
+  sealUrl         String?
+  primaryColor    String?
+  secondaryColor  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

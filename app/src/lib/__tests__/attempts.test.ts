@@ -125,6 +125,43 @@ describe("exam attempts (start / save / submit / grade)", () => {
     ).rejects.toThrow(AttemptOwnershipError);
   });
 
+  it("flags a question without answering it, without clobbering a later real answer", async () => {
+    const attempt = await startAttempt(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, examId);
+
+    // Flag the essay question with no response yet — this is the main use
+    // case for flagging: "come back to this one," not necessarily "I've
+    // already answered this and want to double check it."
+    await saveAnswers(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, attempt.id, [
+      { examQuestionId: essayExamQuestionId, responseJson: null, isFlagged: true },
+    ]);
+
+    let view = await getAttemptForTaking(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, attempt.id);
+    let essayAnswer = view.answers.find((a) => a.examQuestionId === essayExamQuestionId);
+    expect(essayAnswer?.isFlagged).toBe(true);
+    expect(essayAnswer?.responseJson).toBeNull();
+
+    // Answering it for real, still flagged — the response must actually land.
+    await saveAnswers(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, attempt.id, [
+      { examQuestionId: essayExamQuestionId, responseJson: { text: "Draft answer" }, isFlagged: true },
+    ]);
+
+    view = await getAttemptForTaking(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, attempt.id);
+    essayAnswer = view.answers.find((a) => a.examQuestionId === essayExamQuestionId);
+    expect(essayAnswer?.isFlagged).toBe(true);
+    expect(essayAnswer?.responseJson).toEqual({ text: "Draft answer" });
+
+    // Unflagging with no new text typed this round must not erase the
+    // already-saved response — omitting the field, not nulling it, is the point.
+    await saveAnswers(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, attempt.id, [
+      { examQuestionId: essayExamQuestionId, responseJson: null, isFlagged: false },
+    ]);
+
+    view = await getAttemptForTaking(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, attempt.id);
+    essayAnswer = view.answers.find((a) => a.examQuestionId === essayExamQuestionId);
+    expect(essayAnswer?.isFlagged).toBe(false);
+    expect(essayAnswer?.responseJson).toEqual({ text: "Draft answer" });
+  });
+
   it("saves answers, auto-grades the objective question on submit, and leaves the essay pending", async () => {
     const attempt = await startAttempt(institutionA.id, { id: studentEnrolled.id, role: "STUDENT" }, examId);
 

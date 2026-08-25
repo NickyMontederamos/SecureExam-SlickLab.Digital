@@ -75,21 +75,31 @@ Cheapest, highest-visibility pass. Builds on infrastructure that already exists
 (exam-taking page, `ExamAnswer.isFlagged` — already in the schema, unused,
 `ExamVersion.allowBacktracking` — already in the schema, unused).
 
-- [ ] **Exam Rules acknowledgment screen** — a checkbox agreement (no exam-specific
+- [x] **Exam Rules acknowledgment screen** — a checkbox agreement (no exam-specific
       rules engine yet, just an explicit "I have read and agree" gate) before a
-      student can start.
-- [ ] **Live client-side countdown timer**, ticking in the browser, synced against
-      the existing server-authoritative deadline, auto-submitting at zero. Today
-      the remaining time is only computed on page load (`src/app/(app)/attempts/[attemptId]/page.tsx`)
-      — this closes a documented Known Limitation with a real, contained change.
-- [ ] **Flag question** — wire up the already-existing `isFlagged` field on
-      `ExamAnswer`; show a flagged indicator in the question list/nav.
-- [ ] **In-exam tools: Calculator + Notepad** — small floating client-side widgets,
-      no backend needed.
-- [ ] **"Book Exam" framing** — exams already only ever show from a student's
-      enrolled courses (confirmed — no new access-control surface needed); this is
-      a labeling/UX pass on the existing exam list to present it as booking into a
-      specific attempt window, matching the vocabulary students already expect.
+      student can start. Merged with the "Book Exam" item below into one screen.
+- [x] **Live client-side countdown timer**, ticking in the browser, synced against
+      the existing server-authoritative deadline, auto-submitting at zero
+      (`src/components/ExamCountdown.tsx`). Closes the documented "no live
+      countdown" limitation; the server remains authoritative regardless of what
+      the client displays.
+- [x] **Flag question** — wired up the existing `isFlagged` field on `ExamAnswer`.
+      Supports flagging a question before it's answered (`responseJson` stays
+      null, never overwritten by a later flag-only save) — see the new test in
+      `attempts.test.ts`.
+- [x] **In-exam tools: Calculator + Notepad** — `src/components/ExamToolbar.tsx`,
+      floating client-side widgets, no backend needed.
+- [x] **"Book Exam" framing** — exams already only ever show from a student's
+      enrolled courses (confirmed — no new access-control surface needed); merged
+      into the Exam Rules screen as "Book & Start Exam" rather than a separate step.
+
+  **Verified:** `npm run build`, `npx eslint .`, `npm test` (86/86, incl. a new
+  flag-without-answer test), `npm run test:e2e` (4/4, updated to check the new
+  rules checkbox). Live browser click-through was blocked this round by a stuck
+  sign-in popup in the verification tool itself (not app-related) — the
+  countdown ticking and calculator/notepad widgets haven't been eyeballed live
+  yet, though both are small, low-risk, pure-client additions covered by the
+  build/lint pass. Worth a quick manual look next session.
 
 ## Milestone 2 — The exam actively protects itself
 

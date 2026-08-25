@@ -64,11 +64,27 @@ export default async function ExamBuilderPage({
         </div>
 
         {!myAttempt && (
-          <form action={startAttemptAction}>
-            <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-              Start Exam
-            </button>
-          </form>
+          <div className="flex flex-col gap-4 rounded border p-4">
+            <div>
+              <h2 className="mb-2 font-medium">Exam Rules</h2>
+              <ul className="list-disc space-y-1 pl-5 text-sm text-gray-600">
+                <li>You get one attempt at this exam — there are no retakes.</li>
+                <li>The timer starts the moment you begin and cannot be paused.</li>
+                <li>Leaving the exam window or switching tabs is logged and limited.</li>
+                <li>You may flag a question and return to it before submitting.</li>
+                <li>Submit before time runs out — the exam auto-submits at zero.</li>
+              </ul>
+            </div>
+            <form action={startAttemptAction} className="flex flex-col gap-3">
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" required className="mt-1" />
+                I have read and agree to the exam rules above.
+              </label>
+              <button type="submit" className="self-start rounded bg-black px-3 py-2 text-white">
+                Book &amp; Start Exam
+              </button>
+            </form>
+          </div>
         )}
         {myAttempt?.status === "IN_PROGRESS" && (
           <a href={`/attempts/${myAttempt.id}`} className="rounded bg-black px-3 py-2 text-center text-white">

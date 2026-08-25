@@ -144,7 +144,9 @@ export async function getAttemptForTaking(institutionId: string, actor: { id: st
 
 export interface AnswerInput {
   examQuestionId: string;
-  responseJson: Prisma.InputJsonValue;
+  /** Null means "no response typed this round" — e.g. flagging a question the student hasn't answered yet. Never overwrites a previously-saved response. */
+  responseJson: Prisma.InputJsonValue | null;
+  isFlagged?: boolean;
 }
 
 /** Auto-save (master prompt §15): upserts every answer in the batch. Refuses if the attempt isn't the caller's own IN_PROGRESS attempt. */
@@ -181,13 +183,16 @@ export async function saveAnswers(
   }
 
   await db.$transaction(
-    toSave.map((a) =>
-      db.examAnswer.upsert({
+    toSave.map((a) => {
+      // Omitting responseJson (rather than passing null) on both branches means
+      // a flag-only save can never clobber an already-saved response.
+      const responseData = a.responseJson !== null ? { responseJson: a.responseJson } : {};
+      return db.examAnswer.upsert({
         where: { attemptId_examQuestionId: { attemptId, examQuestionId: a.examQuestionId } },
-        create: { attemptId, examQuestionId: a.examQuestionId, responseJson: a.responseJson },
-        update: { responseJson: a.responseJson },
-      })
-    )
+        create: { attemptId, examQuestionId: a.examQuestionId, isFlagged: a.isFlagged ?? false, ...responseData },
+        update: { isFlagged: a.isFlagged ?? false, ...responseData },
+      });
+    })
   );
 }
 

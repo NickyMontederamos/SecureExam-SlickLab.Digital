@@ -62,6 +62,7 @@ test.describe.serial("full exam lifecycle", () => {
 
     await page.click("text=LAW101");
     await page.click(`text=${examTitle}`);
+    await page.check('input[type="checkbox"]'); // agree to the exam rules
     await page.click('button:has-text("Start Exam")');
 
     await page.locator('input[type="radio"]').first().check(); // the seeded correct choice is first

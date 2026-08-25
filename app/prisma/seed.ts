@@ -33,6 +33,18 @@ async function main() {
   const demoPassword = "DemoPass!2026";
   const passwordHash = await hashPassword(demoPassword);
 
+  await db.user.upsert({
+    where: { email: "superadmin@cmlaw.demo" },
+    update: {},
+    create: {
+      institutionId: null,
+      email: "superadmin@cmlaw.demo",
+      name: "Platform Super Admin",
+      role: "SUPER_ADMIN",
+      passwordHash,
+    },
+  });
+
   const admin = await db.user.upsert({
     where: { email: "admin@cmlaw.demo" },
     update: {},
@@ -101,9 +113,10 @@ async function main() {
   console.log("Seed complete.");
   console.log(`Institution: ${institution.name} (${institution.slug})`);
   console.log(`Demo password for all seeded users: ${demoPassword}`);
-  console.log(`  admin@cmlaw.demo   (INSTITUTION_ADMIN)`);
-  console.log(`  faculty@cmlaw.demo (FACULTY)`);
-  console.log(`  student@cmlaw.demo (STUDENT)`);
+  console.log(`  superadmin@cmlaw.demo (SUPER_ADMIN)`);
+  console.log(`  admin@cmlaw.demo      (INSTITUTION_ADMIN)`);
+  console.log(`  faculty@cmlaw.demo    (FACULTY)`);
+  console.log(`  student@cmlaw.demo    (STUDENT)`);
   console.log(`Admin id: ${admin.id}`);
 }
 

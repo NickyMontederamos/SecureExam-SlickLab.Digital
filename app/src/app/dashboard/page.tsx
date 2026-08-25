@@ -6,7 +6,18 @@ import { listCoursesForUser } from "@/lib/courses";
 
 export default async function DashboardPage() {
   const session = await auth();
-  if (!session?.user?.id || !session.user.institutionId) {
+  if (!session?.user?.id) {
+    redirect("/login");
+  }
+
+  // SUPER_ADMIN / PLATFORM_ADMIN operate cross-tenant and have no
+  // institutionId of their own — they get their own landing page, not
+  // this tenant dashboard.
+  if (session.user.role === "SUPER_ADMIN" || session.user.role === "PLATFORM_ADMIN") {
+    redirect("/admin");
+  }
+
+  if (!session.user.institutionId) {
     redirect("/login");
   }
 

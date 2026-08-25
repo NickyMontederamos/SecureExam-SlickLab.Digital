@@ -4,7 +4,7 @@
 Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCHITECTURE.md` for the phased roadmap and why the offline Windows client is deferred to Phase 2.
 
 ## Overall Completion
-~50-55% of the full master-prompt scope (which includes the offline Windows client, out of scope for Phase 1 — see ADR-002). Within Phase 1's own boundary, the **complete exam lifecycle now works end-to-end** — institution → course → question bank → exam authoring → publish → student takes exam → auto-grade + manual grade → student sees result — and has had one round of adversarial security testing (rate limiting, cross-tenant attack simulation, security headers). Institution onboarding, analytics, CSP, and E2E test automation are the remaining Phase 1 gaps.
+~55-60% of the full master-prompt scope (which includes the offline Windows client, out of scope for Phase 1 — see ADR-002). Within Phase 1's own boundary, the **complete exam lifecycle now works end-to-end** — SUPER_ADMIN onboards an institution → its admin's account works immediately → course → question bank → exam authoring → publish → student takes exam → auto-grade + manual grade → student sees result — and has had one round of adversarial security testing (rate limiting, cross-tenant attack simulation, security headers). Analytics, CSP, and E2E test automation are the remaining Phase 1 gaps.
 
 ## Completed (each item below has a passing automated test or a live manual verification against the real local stack — see `docs/ARCHITECTURE.md` "What's verified")
 - [x] Project rationale and master prompt captured (source docs).
@@ -24,7 +24,8 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 - [x] **Faculty grading UI**: per-exam submission queue, per-answer grading form.
 - [x] All of the above — **8/8 new integration tests** (`attempts.test.ts`) — **plus a full live walkthrough covering both grading paths**: (a) an MC-only exam that auto-grades straight to GRADED, and (b) an essay exam that stays SUBMITTED until a faculty member grades it through the UI, confirmed the student's result page updates correctly after.
 - [x] **Security hardening pass**: login rate-limiting (5 attempts / 15 min, per email) — **3/3 unit tests**, plus verified live against the real server (6 rapid failed logins, confirmed the 6th and 7th were rejected with `reason: rate_limited` in the actual audit log, not just asserted). HTTP security headers (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy, Strict-Transport-Security) — verified live with `curl -I`. **A genuine cross-tenant attack simulation**: created a second institution with its own faculty account, logged in as it, and attempted six direct accesses to Tenant A's resources (exam detail, grading queue, a graded attempt, the questions API, the courses API, a course's exams page) through the real HTTP layer — all six were blocked (404 or empty result), zero data leaked. `docs/SECURITY.md` documents the full posture including known gaps.
-- [x] `npm run build`, `npm test` (40/40), `npx eslint .` all pass clean.
+- [x] **Institution onboarding** (`src/lib/institutions.ts`): SUPER_ADMIN/PLATFORM_ADMIN creates an institution and its first INSTITUTION_ADMIN atomically, through a real UI (`/admin`), not just a seed script. Refuses duplicate slugs/emails, refuses every non-platform role — **6/6 integration tests passing**, plus a full live walkthrough: onboarded a second institution end-to-end, logged in as its brand-new admin, confirmed a completely empty, correctly-scoped tenant (no courses, no cross-tenant leakage) — matches the cross-tenant guarantees already proven for the seeded institution. Test institution deleted after.
+- [x] `npm run build`, `npm test` (46/46), `npx eslint .` all pass clean.
 
 ## In Progress
 - Nothing actively in progress; next priority below.
@@ -57,16 +58,15 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 
 ## Test Status
 - Unit tests: 14/14 passing (password hashing, RBAC matrix, rate limiter)
-- Integration tests: 26/26 passing (8 tenant isolation + 4 question bank + 6 exam builder + 8 attempts/grading, all against real Postgres)
-- E2E tests: 0 automated — every flow above (login, question creation, exam authoring, student exam-taking, both grading paths, the security hardening) was verified manually via browser/curl against the real dev server and database, not yet scripted as Playwright tests
+- Integration tests: 32/32 passing (8 tenant isolation + 4 question bank + 6 exam builder + 8 attempts/grading + 6 institution onboarding, all against real Postgres)
+- E2E tests: 0 automated — every flow above (login, question creation, exam authoring, student exam-taking, both grading paths, the security hardening, institution onboarding) was verified manually via browser/curl against the real dev server and database, not yet scripted as Playwright tests
 
 ## Last Validation
-2026-08-25 — `npm run build` (pass), `npx eslint .` (pass, zero warnings), `npm test` (40/40 pass), manual browser walkthrough of the complete exam lifecycle twice (once auto-graded, once manually graded), a live rate-limit test against the running server (confirmed in the audit log), a live cross-tenant attack simulation (six attempts, zero leaked), and header verification via curl. Two real bugs found and fixed earlier this session (ERROR-001, ERROR-002) — none found in this security-hardening round, but that's a lower-confidence "none found" than the earlier rounds since adversarial testing is inherently about looking for what functional testing misses.
+2026-08-25 — `npm run build` (pass), `npx eslint .` (pass, zero warnings), `npm test` (46/46 pass), manual browser walkthrough of the complete exam lifecycle twice (once auto-graded, once manually graded), a live rate-limit test against the running server (confirmed in the audit log), a live cross-tenant attack simulation (six attempts, zero leaked), header verification via curl, and a full institution-onboarding walkthrough (SUPER_ADMIN creates a new institution → its admin logs in → confirmed correctly empty and isolated). Two real bugs found and fixed earlier this session (ERROR-001, ERROR-002) — none found in this round.
 
 ## Next Priority
-1. Institution onboarding flow (SUPER_ADMIN/PLATFORM_ADMIN creates a new institution) — currently only seedable via script; needed before this could plausibly onboard a second institution.
-2. Content-Security-Policy via nonce-based middleware (deferred this round — see `docs/SECURITY.md`).
-3. Script the manually-verified flows as automated E2E tests (Playwright) — worth prioritizing given two real bugs were only caught by live testing.
-4. Remaining documentation set per master prompt §33 (API.md, DATABASE.md, DEPLOYMENT.md, TESTING.md — SECURITY.md is now done).
-5. Basic analytics (score distributions, per-question difficulty) — master prompt §22, not started.
-6. Scope and price a pitch-ready demo cut of the above with the user, given ADR-000's blocked item (no confirmed engagement yet).
+1. Content-Security-Policy via nonce-based middleware (deferred — see `docs/SECURITY.md`).
+2. Script the manually-verified flows as automated E2E tests (Playwright) — worth prioritizing given two real bugs were only caught by live testing.
+3. Remaining documentation set per master prompt §33 (API.md, DATABASE.md, DEPLOYMENT.md, TESTING.md — SECURITY.md is now done).
+4. Basic analytics (score distributions, per-question difficulty) — master prompt §22, not started.
+5. Scope and price a pitch-ready demo cut of the above with the user, given ADR-000's blocked item (no confirmed engagement yet).

@@ -1,0 +1,37 @@
+I need to address several missing features and platform gaps in our SecureExam project. 
+
+Please follow this exact workflow:
+1. EXPLORE: Read the codebase to understand our existing architectural patterns, routing, database models (Prisma), and test setup.
+2. PLAN: Outline your implementation plan before writing any code and wait for my approval.
+3. IMPLEMENT & VERIFY: Implement the changes in modular steps, running tests (`npm test`) and build checks (`npm run build`) after each step.
+
+---
+
+### TASK SCOPE & REQUIREMENTS:
+
+#### 1. Anti-Cheat & Lockdown Rigor (Browser Enforcement)
+* Implement enhanced client-side detection for tab switching and window blurs.
+* Add a visible warning counter and trigger an automatic exam state transition to "FAILED" / "TERMINATED" when the warning threshold (3 strikes) is exceeded.
+* Ensure proctor actions (Pause, Resume, Extend Time, Force Submit) correctly override student client state in real time.
+
+#### 2. Advanced Assessment Capabilities
+* Extend our question handling to support partial-credit logic on objective items rather than full-credit-or-nothing.
+* Add support for essential question tagging (e.g., mapping questions to course learning objectives/outcomes).
+
+#### 3. Reliability & Connection Resilience
+* Implement a local browser `localStorage` caching mechanism for active exam attempt answers.
+* If a network drop occurs, cache answers locally and automatically sync/retry submission once back online without losing student progress.
+
+#### 4. Administrative Workflows
+* Implement a self-service password reset flow or admin-triggered reset link handler.
+* Add configurable retake/attempt limits on exam settings.
+
+---
+
+### CONSTRAINTS & PATTERNS:
+* **Architecture:** Adhere strictly to Phase 1 boundaries. Do not install native OS binaries or native desktop dependencies (Phase 2).
+* **Tenant Isolation:** Enforce strict multi-tenant isolation at the Prisma database query layer on every new route or query.
+* **Coding Style:** Match our existing Next.js App Router patterns, TypeScript types, and Tailwind styles.
+* **Testing:** Do not break existing integration or E2E tests. Add unit/integration tests for any newly added API endpoints or database helpers.
+
+Start by reading the repository layout, `schema.prisma`, and core library files, then provide your initial plan.

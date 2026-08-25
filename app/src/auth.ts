@@ -3,6 +3,7 @@ import Credentials from "next-auth/providers/credentials";
 import { forPlatform } from "@/lib/tenant-db";
 import { verifyPassword } from "@/lib/password";
 import { logAudit } from "@/lib/audit";
+import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
 
 /**
  * Credentials-only auth for Phase 1 (email + password against our own
@@ -26,6 +27,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const email = credentials?.email;
         const password = credentials?.password;
         if (typeof email !== "string" || typeof password !== "string") {
+          return null;
+        }
+
+        // Per-account brute-force throttle (5 attempts / 15 min). Keyed on
+        // the submitted email specifically so a locked-out attacker can't
+        // just try a different email from the same IP to bypass it, and a
+        // legitimate user isn't blocked by attempts against a different
+        // account. IP-based throttling would add defense against
+        // spraying many accounts from one source — worth adding later,
+        // not done here (see docs/PROJECT_STATUS.md).
+        const rateLimitKey = `login:${email.toLowerCase()}`;
+        const rateLimit = checkRateLimit(rateLimitKey);
+        if (!rateLimit.allowed) {
+          await logAudit({
+            action: "auth.login",
+            resourceType: "user",
+            result: "DENIED",
+            metadata: { email, reason: "rate_limited", retryAfterSeconds: rateLimit.retryAfterSeconds },
+          });
           return null;
         }
 
@@ -54,6 +74,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           });
           return null;
         }
+
+        resetRateLimit(rateLimitKey);
 
         await logAudit({
           institutionId: user.institutionId,

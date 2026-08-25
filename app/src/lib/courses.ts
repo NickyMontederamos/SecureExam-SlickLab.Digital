@@ -23,6 +23,15 @@ export class UserNotFoundError extends Error {
   }
 }
 
+export class CourseHasContentError extends Error {
+  constructor(courseId: string) {
+    super(
+      `Course ${courseId} has questions or exams and cannot be deleted — those are academic records. Remove its roster if you need to retire it.`
+    );
+    this.name = "CourseHasContentError";
+  }
+}
+
 /**
  * Role-appropriate course list for the dashboard: students see only what
  * they're enrolled in, faculty see only what they teach, everyone else
@@ -74,7 +83,7 @@ export async function createCourse(institutionId: string, actor: { role: Role },
   });
 }
 
-/** Tenant-scoped detail view including who teaches it and who's enrolled — for the admin's course management page. */
+/** Tenant-scoped detail view including who teaches it, who's enrolled, and how much content it has — for the admin's course management page. */
 export async function getCourseWithRoster(institutionId: string, actor: { role: Role }, courseId: string) {
   assertCan(actor.role, "course", "read");
 
@@ -84,12 +93,59 @@ export async function getCourseWithRoster(institutionId: string, actor: { role: 
     include: {
       faculty: { include: { user: true } },
       enrollments: { include: { user: true } },
+      _count: { select: { questions: true, exams: true } },
     },
   });
   if (!course) {
     throw new CourseNotFoundError(courseId);
   }
   return course;
+}
+
+export interface UpdateCourseInput {
+  name?: string;
+  academicYear?: string;
+}
+
+export async function updateCourse(institutionId: string, actor: { role: Role }, courseId: string, input: UpdateCourseInput) {
+  assertCan(actor.role, "course", "update");
+
+  const db = forTenant(institutionId);
+  const course = await db.course.findFirst({ where: { id: courseId } });
+  if (!course) {
+    throw new CourseNotFoundError(courseId);
+  }
+
+  return db.course.update({ where: { id: courseId }, data: input });
+}
+
+/**
+ * Refuses to delete a course that has any questions or exams attached —
+ * those are academic records (grades, published exams a student may have
+ * already taken) and must never silently disappear. An empty course (the
+ * common case: created by mistake, or a test/demo course) can be removed
+ * cleanly, roster included.
+ */
+export async function deleteCourse(institutionId: string, actor: { role: Role }, courseId: string) {
+  assertCan(actor.role, "course", "delete");
+
+  const db = forTenant(institutionId);
+  const course = await db.course.findFirst({
+    where: { id: courseId },
+    include: { _count: { select: { questions: true, exams: true } } },
+  });
+  if (!course) {
+    throw new CourseNotFoundError(courseId);
+  }
+  if (course._count.questions > 0 || course._count.exams > 0) {
+    throw new CourseHasContentError(courseId);
+  }
+
+  await db.$transaction([
+    db.enrollment.deleteMany({ where: { courseId } }),
+    db.courseFaculty.deleteMany({ where: { courseId } }),
+    db.course.delete({ where: { id: courseId } }),
+  ]);
 }
 
 export async function assignFaculty(institutionId: string, actor: { role: Role }, courseId: string, userId: string) {
@@ -130,4 +186,16 @@ export async function enrollStudent(institutionId: string, actor: { role: Role }
     update: {},
     create: { courseId, userId } as never,
   });
+}
+
+export async function unassignFaculty(institutionId: string, actor: { role: Role }, courseId: string, userId: string) {
+  assertCan(actor.role, "course", "update");
+  const db = forTenant(institutionId);
+  await db.courseFaculty.deleteMany({ where: { courseId, userId } });
+}
+
+export async function unenrollStudent(institutionId: string, actor: { role: Role }, courseId: string, userId: string) {
+  assertCan(actor.role, "course", "update");
+  const db = forTenant(institutionId);
+  await db.enrollment.deleteMany({ where: { courseId, userId } });
 }

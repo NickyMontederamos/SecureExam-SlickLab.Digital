@@ -4,9 +4,14 @@ import { forPlatform } from "../tenant-db";
 import {
   assignFaculty,
   CourseCodeTakenError,
+  CourseHasContentError,
   createCourse,
+  deleteCourse,
   enrollStudent,
   getCourseWithRoster,
+  unassignFaculty,
+  unenrollStudent,
+  updateCourse,
   UserNotFoundError,
 } from "../courses";
 
@@ -41,6 +46,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     const platform = forPlatform();
     await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: { in: [institutionA.id, institutionB.id] } } });
     await platform.user.deleteMany({ where: { institutionId: { in: [institutionA.id, institutionB.id] } } });
     await platform.institution.deleteMany({ where: { id: { in: [institutionA.id, institutionB.id] } } });
@@ -90,5 +96,58 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     await expect(
       assignFaculty(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, facultyB.id)
     ).rejects.toThrow(UserNotFoundError);
+  });
+
+  it("updates a course's name and academic year", async () => {
+    const courses = await forPlatform().course.findMany({ where: { institutionId: institutionA.id, code: "LAW999" } });
+    const courseId = courses[0].id;
+
+    const updated = await updateCourse(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, { name: "Renamed Course" });
+    expect(updated.name).toBe("Renamed Course");
+  });
+
+  it("unassigns faculty and unenrolls a student", async () => {
+    const courses = await forPlatform().course.findMany({ where: { institutionId: institutionA.id, code: "LAW999" } });
+    const courseId = courses[0].id;
+
+    await unassignFaculty(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, facultyA.id);
+    await unenrollStudent(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, studentA.id);
+
+    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    expect(roster.faculty.some((f) => f.userId === facultyA.id)).toBe(false);
+    expect(roster.enrollments.some((e) => e.userId === studentA.id)).toBe(false);
+  });
+
+  it("deletes an empty course", async () => {
+    const empty = await createCourse(institutionA.id, { role: "INSTITUTION_ADMIN" }, {
+      code: "LAW777",
+      name: "Empty Course",
+      academicYear: "2026-2027",
+    });
+
+    await deleteCourse(institutionA.id, { role: "INSTITUTION_ADMIN" }, empty.id);
+
+    const stillExists = await forPlatform().course.findUnique({ where: { id: empty.id } });
+    expect(stillExists).toBeNull();
+  });
+
+  it("refuses to delete a course that has a question attached", async () => {
+    const courses = await forPlatform().course.findMany({ where: { institutionId: institutionA.id, code: "LAW999" } });
+    const courseId = courses[0].id;
+
+    await forPlatform().question.create({
+      data: {
+        institutionId: institutionA.id,
+        courseId,
+        type: "SHORT_ANSWER",
+        tags: [],
+        learningObjectives: [],
+        createdById: facultyA.id,
+      },
+    });
+
+    await expect(deleteCourse(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId)).rejects.toThrow(
+      CourseHasContentError
+    );
   });
 });

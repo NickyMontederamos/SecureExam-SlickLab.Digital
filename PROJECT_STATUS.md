@@ -15,10 +15,12 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 - [x] Student exam-taking + auto/manual grading — **8/8 integration tests**, two full live walkthroughs (auto-graded and manually-graded paths).
 - [x] Security hardening: rate limiting, HTTP headers, a real cross-tenant attack simulation (six attempts, zero leaked) — see `docs/SECURITY.md`.
 - [x] Institution onboarding (SUPER_ADMIN creates a new institution + its first admin) — **6/6 integration tests**, live-verified.
-- [x] **NEW — Institution admin console**: an INSTITUTION_ADMIN can now create courses, create user accounts (any non-platform role), and manage a course's roster (assign faculty, enroll students) — all through real UI, not just the seed script. `src/lib/users.ts` + `src/lib/courses.ts` (extended) — **11/11 new integration tests passing** (5 users, 6 courses), plus a full live walkthrough: created a course, created a faculty account, assigned that faculty and enrolled a student, both reflected correctly in the roster UI immediately.
-- [x] **NEW — Playwright E2E suite** (`npm run test:e2e`): scripts the golden path (faculty authors + publishes an exam, student takes it and gets an auto-graded result) against the real dev server and database. Both tests pass. Caught and fixed a real race condition in the test itself during setup (see ERROR-003 below) — the kind of bug class that manual testing alone (ERROR-001, ERROR-002) had already shown this project needs automated coverage for.
+- [x] **Institution admin console**: an INSTITUTION_ADMIN can create courses, create user accounts (any non-platform role), and manage a course's roster (assign/unassign faculty, enroll/unenroll students) — all through real UI, not just the seed script. Edit a course's name/year, and delete a course *if and only if it has no questions or exams attached* (real academic records are never silently destroyable — the delete button doesn't even render otherwise, with an explanation of why). `src/lib/users.ts` + `src/lib/courses.ts` — **15/15 integration tests passing** (6 users, 9 courses incl. edit/delete/roster-removal), plus a full live walkthrough including the protected-delete case (tried deleting a course with real content, got refused with a clear reason instead of an error).
+- [x] Also caught and fixed while building the admin console: the `tenant-db.ts` extension didn't handle `upsert` (needed for idempotent faculty/student assignment) — extended it with the same rigor as create/update, 3 new tenant-isolation tests. And: the grading page rendered an editable grade form for INSTITUTION_ADMIN (who can *view* grades but not *assign* them per rbac.ts) — clicking "Save grade" would have thrown an unhandled `ForbiddenError`. Found by walking through the admin's actual permissions before writing a test guide, not by a user report. Fixed — read-only status for roles that can't grade.
+- [x] Real transparent-background institution logos + SlickLab.Digital credit; app background now stays white regardless of OS/browser dark-mode setting (was following `prefers-color-scheme`, which is why it went dark for one tester).
+- [x] Playwright E2E suite (`npm run test:e2e`): scripts the golden path (faculty authors + publishes an exam, student takes it and gets an auto-graded result). Caught and fixed a real race condition in the test itself (ERROR-003) — the kind of bug class manual testing alone (ERROR-001, ERROR-002) had already shown this project needs automated coverage for.
 - [x] Full documentation set per master prompt §33: ARCHITECTURE.md, ARCHITECTURE_DECISIONS.md, SECURITY.md, DATABASE.md, API.md, DEPLOYMENT.md, TESTING.md, ERROR_LOG.md, DEPENDENCY_AUDIT.md.
-- [x] `npm run build`, `npm test` (60/60), `npx eslint .` all pass clean.
+- [x] `npm run build`, `npm test` (64/64), `npx eslint .` all pass clean.
 
 ## In Progress
 - Nothing actively in progress; next priority below.
@@ -52,11 +54,11 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 
 ## Test Status
 - Unit tests: 14/14 passing
-- Integration tests: 46/46 passing (11 tenant isolation + 4 question bank + 6 exam builder + 8 attempts/grading + 6 institution onboarding + 5 users + 6 courses, all against real Postgres)
+- Integration tests: 50/50 passing (11 tenant isolation + 4 question bank + 6 exam builder + 8 attempts/grading + 6 institution onboarding + 6 users + 9 courses, all against real Postgres)
 - E2E tests: 2/2 passing (Playwright — the golden path: author, publish, take, auto-grade)
 
 ## Last Validation
-2026-08-25 — `npm run build` (pass), `npx eslint .` (pass), `npm test` (60/60 pass), `npm run test:e2e` (2/2 pass), plus live browser walkthroughs of: the complete exam lifecycle (both grading paths), a rate-limit test, a cross-tenant attack simulation, institution onboarding, and the new admin console (course creation, user creation, roster management). Three real bugs found and fixed this session (ERROR-001, ERROR-002, ERROR-003) — all caught by actually running the thing, none by the type checker or a passing build alone.
+2026-08-25 — `npm run build` (pass), `npx eslint .` (pass), `npm test` (64/64 pass), `npm run test:e2e` (2/2 pass), plus live browser walkthroughs of: the complete exam lifecycle (both grading paths), a rate-limit test, a cross-tenant attack simulation, institution onboarding, and the full admin console including edit/delete/roster-removal (verified live, including the protected-delete case). Three real bugs found and fixed this session (ERROR-001, ERROR-002, ERROR-003), plus a fourth caught before any user hit it (the admin grading-page ForbiddenError) — all found by actually running the thing, none by the type checker or a passing build alone.
 
 ## Next Priority
 1. Content-Security-Policy via nonce-based middleware (deferred — see `docs/SECURITY.md`).

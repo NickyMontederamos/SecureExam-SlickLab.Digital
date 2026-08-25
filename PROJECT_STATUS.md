@@ -4,7 +4,7 @@
 Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCHITECTURE.md` for the phased roadmap and why the offline Windows client is deferred to Phase 2.
 
 ## Overall Completion
-~18-20%. Foundational slice (data model, tenant isolation, auth, RBAC, audit log, institution branding, question bank) is built and genuinely tested. Exam builder, exam-taking, grading, analytics, and the entire offline client are not started.
+~27-30%. Foundational slice plus a complete draft-to-published exam authoring flow (data model, tenant isolation, auth, RBAC, audit log, institution branding, question bank, exam builder) is built and genuinely tested. Exam-taking (the student side), grading, analytics, and the entire offline client are not started.
 
 ## Completed (each item below has a passing automated test or a live manual verification against the real local stack — see `docs/ARCHITECTURE.md` "What's verified")
 - [x] Project rationale and master prompt captured (source docs).
@@ -18,6 +18,7 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 - [x] Audit logging — verified live, real rows in Postgres for both login outcomes.
 - [x] Institution branding (College of Maasin seal + College of Law crest + brand colors) rendered on login and dashboard — verified live in browser.
 - [x] Question bank: create question + first version atomically, list questions for a course, correct-answer parsing from a simple choices form — **4/4 integration tests passing**, plus verified live end-to-end as faculty (form submit → row in Postgres with correct JSON).
+- [x] Exam builder: create exam (DRAFT + immutable v1), add questions from the bank, publish — publishing freezes the version and refuses further edits, refuses publishing with zero questions, refuses cross-tenant exam access — **6/6 integration tests passing**, plus a full live run (create → add question → publish → confirmed in Postgres, edit form correctly disappears once published).
 - [x] One working end-to-end page (`/dashboard`) proving the full stack: session → RBAC-aware role display → tenant-scoped Prisma query → rendered UI.
 - [x] Seed script for a demo institution + admin/faculty/student users, now with real branding.
 - [x] `npm run build`, `npm test`, `npx eslint .` all pass clean.
@@ -36,20 +37,25 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 ## Known Bugs
 - None currently known. ERROR-001 (session.user.id missing, silently broke question creation) found via live browser testing and fixed same session — see `docs/ERROR_LOG.md`.
 
+## Known Limitations (deliberate, not bugs)
+- Exam versioning is single-version-per-exam in Phase 1: once published, a version is frozen and there is no "revise a published exam" flow yet (would create ExamVersion #2). Schema already supports it; the workflow doesn't exist yet. See `src/lib/exams.ts` doc comment.
+- Publishing an exam is one-way in Phase 1 — no unpublish/archive action yet.
+
 ## Security Issues
 - `deepmerge-ts` (transitive, via the `prisma` CLI dev dependency) has a known high-severity stack-exhaustion advisory. Dev-tooling-only exposure (not in the runtime/build artifact); tracked in `docs/DEPENDENCY_AUDIT.md`, no fix available upstream yet.
 - Everything else in this slice (auth, tenant isolation, RBAC) has been built and tested but has NOT had a dedicated adversarial security review — treat as functionally correct, not yet security-audited.
 
 ## Test Status
 - Unit tests: 11/11 passing (password hashing, RBAC matrix)
-- Integration tests: 12/12 passing (8 tenant isolation + 4 question bank, all against real Postgres)
-- E2E tests: 0 automated (login and question-creation flows were verified manually via browser, not yet scripted as Playwright/Cypress tests)
+- Integration tests: 18/18 passing (8 tenant isolation + 4 question bank + 6 exam builder, all against real Postgres)
+- E2E tests: 0 automated (login, question-creation, and exam-builder flows were verified manually via browser, not yet scripted as Playwright/Cypress tests)
 
 ## Last Validation
-2026-08-25 — `npm run build` (pass), `npx eslint .` (pass, zero warnings), `npm test` (23/23 pass), manual browser verification of: login success/failure, tenant-scoped dashboard render, audit log rows, institution branding rendering, and full question-creation flow (faculty submits form → question + version row in Postgres with correctly parsed choices/answer key). One real bug (ERROR-001) found and fixed during this verification, not before it.
+2026-08-25 — `npm run build` (pass), `npx eslint .` (pass, zero warnings), `npm test` (29/29 pass), manual browser verification of: login success/failure, tenant-scoped dashboard render, audit log rows, institution branding rendering, full question-creation flow, and the full exam-authoring flow (create draft exam → add a bank question → publish → verified in Postgres → confirmed edit UI correctly locks after publish). One real bug (ERROR-001) found and fixed earlier in this session, none found in this round.
 
 ## Next Priority
-1. Institution onboarding flow (SUPER_ADMIN/PLATFORM_ADMIN creates a new institution via `forPlatform()`) — currently only seedable via script.
-2. Exam builder: create exam → immutable versions → publish (master prompt §11), selecting questions from the bank built this session.
-3. Script the manually-verified login + question-creation flows as automated E2E tests (Playwright) so they stop depending on manual browser checks — worth prioritizing given ERROR-001 was only caught by live testing, not the type checker or unit tests.
-4. Scope and price a pitch-ready demo cut of the above with the user before going further, given ADR-000's blocked item (no confirmed engagement yet).
+1. Student-facing exam-taking flow: student views a published exam, starts an `ExamAttempt`, answers questions, submits (master prompt §17-19) — this is the other half of the exam lifecycle and currently has zero UI.
+2. Grading: auto-grade objective question types on submission, manual grading UI for essay/short-answer (master prompt §21).
+3. Institution onboarding flow (SUPER_ADMIN/PLATFORM_ADMIN creates a new institution via `forPlatform()`) — currently only seedable via script.
+4. Script the manually-verified flows (login, question creation, exam authoring) as automated E2E tests (Playwright) — worth prioritizing given ERROR-001 was only caught by live testing, not the type checker or unit tests.
+5. Scope and price a pitch-ready demo cut of the above with the user before going further, given ADR-000's blocked item (no confirmed engagement yet).

@@ -94,7 +94,9 @@ export default async function CourseQuestionsPage({
         <h1 className="text-xl font-semibold">
           {course.code} — {course.name}
         </h1>
-        <p className="text-sm text-gray-500">Question bank</p>
+        <p className="text-sm text-gray-500">
+          Question bank · <a href={`/courses/${courseId}/exams`} className="underline">Exams</a>
+        </p>
       </div>
 
       <section className="flex flex-col gap-2">

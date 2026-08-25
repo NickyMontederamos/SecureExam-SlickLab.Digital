@@ -66,7 +66,16 @@ export default async function ManageCoursePage({ params }: { params: Promise<{ c
         <h1 className="text-xl font-semibold">
           {course.code} — {course.name}
         </h1>
-        <p className="text-sm text-gray-500">Roster management</p>
+        <p className="text-sm text-gray-500">
+          Roster management ·{" "}
+          <a href={`/courses/${courseId}/questions`} className="underline">
+            Question bank
+          </a>{" "}
+          ·{" "}
+          <a href={`/courses/${courseId}/exams`} className="underline">
+            Exams
+          </a>
+        </p>
       </div>
 
       <section className="rounded border p-4">

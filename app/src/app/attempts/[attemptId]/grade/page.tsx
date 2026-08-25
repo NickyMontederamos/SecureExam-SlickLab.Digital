@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { AttemptNotFoundError, getAttemptForTaking } from "@/lib/attempts";
 import { gradeAnswer } from "@/lib/grading";
-import { ForbiddenError } from "@/lib/rbac";
+import { can, ForbiddenError } from "@/lib/rbac";
 
 export default async function GradeAttemptPage({ params }: { params: Promise<{ attemptId: string }> }) {
   const session = await auth();
@@ -32,6 +32,7 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
   }
 
   const answersByQuestion = new Map(attempt.answers.map((a) => [a.examQuestionId, a]));
+  const canGrade = can(session.user.role, "grade", "grade");
 
   async function gradeAction(formData: FormData) {
     "use server";
@@ -75,7 +76,7 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
               <p className="mt-1">{eq.questionVersion.prompt}</p>
               <p className="mt-1 rounded bg-gray-50 p-2 text-xs">{responseText}</p>
 
-              {isManual ? (
+              {isManual && canGrade ? (
                 <form action={gradeAction} className="mt-2 flex items-center gap-2">
                   <input type="hidden" name="examAnswerId" value={answer?.id} />
                   <input
@@ -91,6 +92,12 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
                     Save grade
                   </button>
                 </form>
+              ) : isManual ? (
+                <p className="mt-2 text-xs text-gray-500">
+                  {answer?.pointsAwarded === null || answer?.pointsAwarded === undefined
+                    ? "Pending grading (view only — your role can't grade)"
+                    : `${answer.pointsAwarded} / ${eq.points} (manually graded)`}
+                </p>
               ) : (
                 <p className="mt-2 text-xs text-gray-500">
                   {answer?.pointsAwarded ?? 0} / {eq.points} (auto-graded)

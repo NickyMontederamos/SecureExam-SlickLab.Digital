@@ -61,11 +61,17 @@ Phase 1 — Cloud SaaS Core (online-only examination management). See `docs/ARCH
 - E2E tests: 4/4 passing (Playwright — golden path: author/publish/take/auto-grade; CSV import: valid file succeeds, invalid file rejected cleanly)
 
 ## Last Validation
-2026-08-25 — `npm run build` (pass), `npx eslint .` (pass), `npm test` (81/81 pass), `npm run test:e2e` (4/4 pass), plus live browser walkthroughs of: the complete exam lifecycle (both grading paths), a rate-limit test, a cross-tenant attack simulation, institution onboarding, the full admin console including edit/delete/roster-removal and user activate/deactivate/password-reset (all verified live). Three real bugs found and fixed this session (ERROR-001, ERROR-002, ERROR-003), plus a fourth caught before any user hit it (the admin grading-page ForbiddenError) — all found by actually running the thing, none by the type checker or a passing build alone.
+2026-08-25 (AppHeader + BrandCredit pass) — `npm run build` (pass), `npx eslint .` (pass), `npm test` (85/85 pass), `npm run test:e2e` (4/4 pass), plus a live browser walkthrough: login → dashboard → a course's manage page (three levels deep), confirming the header (branding + name/role + sign-out) and the corner credit both render and don't block interaction.
+
+2026-08-25 (bulk-exam-building session) — `npm run build` (pass), `npx eslint .` (pass), `npm test` (81/81 pass), `npm run test:e2e` (4/4 pass), plus live browser walkthroughs of: the complete exam lifecycle (both grading paths), a rate-limit test, a cross-tenant attack simulation, institution onboarding, the full admin console including edit/delete/roster-removal and user activate/deactivate/password-reset (all verified live). Three real bugs found and fixed this session (ERROR-001, ERROR-002, ERROR-003), plus a fourth caught before any user hit it (the admin grading-page ForbiddenError) — all found by actually running the thing, none by the type checker or a passing build alone.
 
 ## Next Priority
-0. **See `NEXT_PHASE_PLAN.md`** — ownership/for-sale watermarking (all pages) + a shared app header with institution logo placement, scoped and ready to build in a fresh session.
 1. Content-Security-Policy via nonce-based middleware (deferred — see `docs/SECURITY.md`).
 2. Expand the Playwright E2E suite beyond the one golden-path spec (institution onboarding, admin console, essay grading path).
 3. Basic analytics (score distributions, per-question difficulty) — master prompt §22, not started.
 4. Scope and price a pitch-ready demo cut of the above with the user, given ADR-000's blocked item (no confirmed engagement yet).
+
+## Recently Completed — see `NEXT_PHASE_PLAN.md` for full rationale
+- [x] **Shared `<AppHeader />`**: every authenticated route (dashboard, courses, exams, attempts, admin, users) now sits under a `src/app/(app)/` route group with one header — institution seal+crest+name top-left, current user's name/role + sign-out top-right. `/login` sits outside the group, unchanged. Previously only `/dashboard` and `/admin` had any sign-out control at all; a user three clicks deep had none.
+- [x] **Ownership credit, scoped down from the original "for-sale watermark" ask**: rather than a tiled "FOR SALE" overlay on every screen (including the exam-taking view), shipped a small fixed-corner `<BrandCredit />` ("Built by SlickLab.Digital", reusing the existing `slicklab-digital-watermark.png`) — promoted from login-only to site-wide. Rationale: a loud ownership overlay in front of a prospective institutional client undercuts the same pitch it's meant to protect; see `NEXT_PHASE_PLAN.md` Ask 1 for the full discussion. Toggleable via `NEXT_PUBLIC_SHOW_BRAND_CREDIT=false`.
+- [x] `npm run build`, `npx eslint .`, `npm test` (85/85), `npm run test:e2e` (4/4) all pass after the restructuring; live-verified login → dashboard → three-levels-deep course page with the header and credit both present and non-blocking.

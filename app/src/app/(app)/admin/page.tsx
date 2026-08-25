@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { auth, signOut } from "@/auth";
+import { auth } from "@/auth";
 import { createInstitution, EmailTakenError, listInstitutions, SlugTakenError } from "@/lib/institutions";
 
 export default async function AdminPage({
@@ -46,23 +46,8 @@ export default async function AdminPage({
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div className="flex items-center justify-between border-b pb-4">
-        <div>
-          <h1 className="text-xl font-semibold">Platform Admin</h1>
-          <p className="text-sm text-gray-500">
-            {session.user.name} · {session.user.role}
-          </p>
-        </div>
-        <form
-          action={async () => {
-            "use server";
-            await signOut({ redirectTo: "/login" });
-          }}
-        >
-          <button type="submit" className="rounded border px-3 py-1 text-sm">
-            Sign out
-          </button>
-        </form>
+      <div>
+        <h1 className="text-xl font-semibold">Platform Admin</h1>
       </div>
 
       <section>

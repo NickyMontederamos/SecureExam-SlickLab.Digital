@@ -4,6 +4,7 @@ import { forPlatform } from "../tenant-db";
 import { createQuestion } from "../questions";
 import {
   addExamQuestion,
+  addExamQuestions,
   createExam,
   EmptyExamError,
   ExamNotEditableError,
@@ -11,6 +12,7 @@ import {
   getExam,
   listExamsForCourse,
   publishExam,
+  QuestionNotFoundError,
 } from "../exams";
 
 describe("exam builder (createExam / addExamQuestion / publishExam)", () => {
@@ -132,6 +134,52 @@ describe("exam builder (createExam / addExamQuestion / publishExam)", () => {
     await expect(
       addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: question.id, points: 5 })
     ).rejects.toThrow(ExamNotEditableError);
+  });
+
+  it("bulk-adds several bank questions to an exam in one call", async () => {
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Bulk Add Exam", timeLimitMinutes: 60 }
+    );
+    const { question: q1 } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Bulk question 1", points: 3 }
+    );
+    const { question: q2 } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Bulk question 2", points: 4 }
+    );
+
+    const attached = await addExamQuestions(institutionA.id, { role: "FACULTY" }, exam.id, [q1.id, q2.id]);
+    expect(attached).toHaveLength(2);
+    expect(attached.map((eq) => eq.order).sort()).toEqual([0, 1]);
+    expect(attached.map((eq) => eq.points).sort()).toEqual([3, 4]); // took each question's own default points
+
+    const fetched = await getExam(institutionA.id, { role: "FACULTY" }, exam.id);
+    expect(fetched.versions[0].examQuestions).toHaveLength(2);
+  });
+
+  it("bulk-add refuses and attaches nothing if one question id doesn't belong to this tenant", async () => {
+    const { exam } = await createExam(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, title: "Bulk Add Refusal", timeLimitMinutes: 60 }
+    );
+    const { question: q1 } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Bulk question 3", points: 1 }
+    );
+
+    await expect(
+      addExamQuestions(institutionA.id, { role: "FACULTY" }, exam.id, [q1.id, "does-not-exist"])
+    ).rejects.toThrow(QuestionNotFoundError);
+
+    const fetched = await getExam(institutionA.id, { role: "FACULTY" }, exam.id);
+    expect(fetched.versions[0].examQuestions).toHaveLength(0);
   });
 
   it("cannot see or touch another tenant's exam", async () => {

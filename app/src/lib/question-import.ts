@@ -3,6 +3,7 @@ import type { Prisma, QuestionType, Role } from "@prisma/client";
 import { assertCan } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { CourseNotFoundError } from "./questions";
+import { ExamNotEditableError, ExamNotFoundError } from "./exams";
 
 const VALID_TYPES: QuestionType[] = ["MULTIPLE_CHOICE", "MULTIPLE_RESPONSE", "TRUE_FALSE", "ESSAY", "SHORT_ANSWER"];
 const CHOICE_COLUMNS = ["choice1", "choice2", "choice3", "choice4", "choice5", "choice6"];
@@ -125,14 +126,25 @@ export class QuestionImportValidationError extends Error {
  * partially-imported question bank from a bad file is worse than a clear
  * "fix these rows and re-upload" — no confirm/preview step to build, and
  * no risk of half-garbage data landing in the bank.
+ *
+ * `examId` is optional: when given, every imported question is also
+ * attached to that exam's active (DRAFT) version in the same transaction
+ * — one upload both stocks the reusable course bank and builds the exam,
+ * for the common case of "this file of questions is for this exam." The
+ * questions still land in the bank either way (never exam-only), so
+ * they stay reusable for other exams later.
  */
 export async function importQuestionsFromCsv(
   institutionId: string,
   actor: { id: string; role: Role },
   courseId: string,
-  csvText: string
-): Promise<{ imported: number }> {
+  csvText: string,
+  examId?: string
+): Promise<{ imported: number; attachedToExam: boolean }> {
   assertCan(actor.role, "question", "create");
+  if (examId) {
+    assertCan(actor.role, "exam", "update");
+  }
 
   const { rows, errors } = parseQuestionCsv(csvText);
   if (errors.length > 0) {
@@ -145,7 +157,28 @@ export async function importQuestionsFromCsv(
     throw new CourseNotFoundError(courseId);
   }
 
+  let examVersionId: string | undefined;
+  if (examId) {
+    const exam = await db.exam.findFirst({
+      where: { id: examId },
+      include: { versions: { where: { isActive: true }, take: 1 } },
+    });
+    if (!exam) {
+      throw new ExamNotFoundError(examId);
+    }
+    if (exam.status !== "DRAFT") {
+      throw new ExamNotEditableError(examId);
+    }
+    const activeVersion = exam.versions[0];
+    if (!activeVersion) {
+      throw new ExamNotEditableError(examId);
+    }
+    examVersionId = activeVersion.id;
+  }
+
   await db.$transaction(async (tx) => {
+    let order = examVersionId ? await tx.examQuestion.count({ where: { examVersionId } }) : 0;
+
     for (const row of rows) {
       const question = await tx.question.create({
         data: {
@@ -157,7 +190,7 @@ export async function importQuestionsFromCsv(
           createdById: actor.id,
         } as never,
       });
-      await tx.questionVersion.create({
+      const version = await tx.questionVersion.create({
         data: {
           questionId: question.id,
           versionNumber: 1,
@@ -167,8 +200,20 @@ export async function importQuestionsFromCsv(
           points: row.points,
         },
       });
+
+      if (examVersionId) {
+        await tx.examQuestion.create({
+          data: {
+            examVersionId,
+            questionId: question.id,
+            questionVersionId: version.id,
+            order: order++,
+            points: row.points,
+          },
+        });
+      }
     }
   });
 
-  return { imported: rows.length };
+  return { imported: rows.length, attachedToExam: Boolean(examVersionId) };
 }

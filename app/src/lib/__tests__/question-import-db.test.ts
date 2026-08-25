@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ForbiddenError } from "../rbac";
 import { forPlatform } from "../tenant-db";
 import { CourseNotFoundError } from "../questions";
+import { createExam, ExamNotEditableError, publishExam } from "../exams";
 import { importQuestionsFromCsv, QuestionImportValidationError } from "../question-import";
 
 const COLUMNS = [
@@ -62,6 +63,9 @@ describe("importQuestionsFromCsv", () => {
 
   afterAll(async () => {
     const platform = forPlatform();
+    await platform.examQuestion.deleteMany({ where: { examVersion: { exam: { institutionId: institutionA.id } } } });
+    await platform.examVersion.deleteMany({ where: { exam: { institutionId: institutionA.id } } });
+    await platform.exam.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
@@ -110,5 +114,59 @@ describe("importQuestionsFromCsv", () => {
     await expect(
       importQuestionsFromCsv(institutionA.id, { id: faculty.id, role: "STUDENT" }, courseA.id, text)
     ).rejects.toThrow(ForbiddenError);
+  });
+
+  it("imports and attaches every row directly to an exam in one call", async () => {
+    const { exam } = await createExam(institutionA.id, faculty, {
+      courseId: courseA.id,
+      title: "Import-into-exam test",
+      timeLimitMinutes: 60,
+    });
+
+    const text = csv(
+      { type: "MULTIPLE_CHOICE", prompt: "Attach me 1", choice1: "A", choice2: "B", correct_choices: "1", points: "2" },
+      { type: "SHORT_ANSWER", prompt: "Attach me 2", points: "3" }
+    );
+
+    const result = await importQuestionsFromCsv(institutionA.id, faculty, courseA.id, text, exam.id);
+    expect(result.imported).toBe(2);
+    expect(result.attachedToExam).toBe(true);
+
+    const examQuestions = await forPlatform().examQuestion.findMany({
+      where: { examVersion: { examId: exam.id } },
+    });
+    expect(examQuestions).toHaveLength(2);
+    expect(examQuestions.map((eq) => eq.points).sort()).toEqual([2, 3]);
+
+    // still landed in the reusable course bank, not exam-only
+    const questions = await forPlatform().question.findMany({ where: { courseId: courseA.id } });
+    expect(questions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("attaches nothing (and imports nothing) if the target exam is already published", async () => {
+    const { exam } = await createExam(institutionA.id, faculty, {
+      courseId: courseA.id,
+      title: "Already published, import target",
+      timeLimitMinutes: 60,
+    });
+    // give it one question so it's publishable, then publish it
+    await importQuestionsFromCsv(
+      institutionA.id,
+      faculty,
+      courseA.id,
+      csv({ type: "ESSAY", prompt: "Seed question so it can publish", points: "5" }),
+      exam.id
+    );
+    await publishExam(institutionA.id, faculty, exam.id);
+
+    const before = await forPlatform().question.count({ where: { courseId: courseA.id } });
+
+    const text = csv({ type: "ESSAY", prompt: "Should never land, exam is published", points: "10" });
+    await expect(importQuestionsFromCsv(institutionA.id, faculty, courseA.id, text, exam.id)).rejects.toThrow(
+      ExamNotEditableError
+    );
+
+    const after = await forPlatform().question.count({ where: { courseId: courseA.id } });
+    expect(after).toBe(before); // the whole import was refused, not just the attach step
   });
 });

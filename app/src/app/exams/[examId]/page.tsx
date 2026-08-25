@@ -2,14 +2,17 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
-import { addExamQuestion, ExamNotFoundError, getExam, publishExam } from "@/lib/exams";
+import { addExamQuestion, addExamQuestions, ExamNotFoundError, getExam, publishExam, QuestionNotFoundError } from "@/lib/exams";
 import { listQuestionsForCourse } from "@/lib/questions";
+import { importQuestionsFromCsv, QuestionImportValidationError } from "@/lib/question-import";
 import { findAttemptForStudent, startAttempt } from "@/lib/attempts";
 
 export default async function ExamBuilderPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ examId: string }>;
+  searchParams: Promise<{ importError?: string; imported?: string; bulkError?: string }>;
 }) {
   const session = await auth();
   if (!session?.user?.institutionId) {
@@ -17,9 +20,10 @@ export default async function ExamBuilderPage({
   }
 
   const { examId } = await params;
+  const { importError, imported, bulkError } = await searchParams;
   const institutionId = session.user.institutionId;
 
-  let exam;
+  let exam: Awaited<ReturnType<typeof getExam>>;
   try {
     exam = await getExam(institutionId, session.user, examId);
   } catch (error) {
@@ -87,6 +91,7 @@ export default async function ExamBuilderPage({
     ? await listQuestionsForCourse(institutionId, session.user, exam.courseId)
     : [];
   const usedQuestionIds = new Set(version?.examQuestions.map((eq) => eq.questionId) ?? []);
+  const unusedQuestions = availableQuestions.filter((q) => !usedQuestionIds.has(q.id));
 
   async function addQuestionAction(formData: FormData) {
     "use server";
@@ -101,6 +106,64 @@ export default async function ExamBuilderPage({
 
     await addExamQuestion(authSession.user.institutionId, authSession.user, { examId, questionId, points });
     revalidatePath(`/exams/${examId}`);
+  }
+
+  async function addSelectedQuestionsAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+
+    const questionIds = formData.getAll("questionIds").map(String).filter(Boolean);
+    if (questionIds.length === 0) return;
+
+    try {
+      await addExamQuestions(authSession.user.institutionId, authSession.user, examId, questionIds);
+    } catch (err) {
+      if (err instanceof QuestionNotFoundError) {
+        redirect(`/exams/${examId}?bulkError=${encodeURIComponent(err.message)}`);
+      }
+      throw err;
+    }
+    revalidatePath(`/exams/${examId}`);
+  }
+
+  async function importCsvIntoExamAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    const actorId = authSession?.user?.id;
+    const actorInstitutionId = authSession?.user?.institutionId;
+    const actorRole = authSession?.user?.role;
+    if (!actorId || !actorInstitutionId || !actorRole) {
+      redirect("/login");
+    }
+
+    const file = formData.get("file") as File | null;
+    if (!file || file.size === 0) {
+      redirect(`/exams/${examId}?importError=${encodeURIComponent("Choose a CSV file first")}`);
+    }
+
+    const text = await file.text();
+    let result: { imported: number };
+    try {
+      result = await importQuestionsFromCsv(
+        actorInstitutionId,
+        { id: actorId, role: actorRole },
+        exam.courseId,
+        text,
+        examId
+      );
+    } catch (err) {
+      if (err instanceof QuestionImportValidationError) {
+        const summary = err.errors.map((e) => `Row ${e.row}: ${e.message}`).join(" · ");
+        redirect(`/exams/${examId}?importError=${encodeURIComponent(summary)}`);
+      }
+      throw err;
+    }
+
+    revalidatePath(`/exams/${examId}`);
+    redirect(`/exams/${examId}?imported=${result.imported}`);
   }
 
   async function publishAction() {
@@ -139,6 +202,22 @@ export default async function ExamBuilderPage({
         )}
       </div>
 
+      {imported && (
+        <p className="rounded bg-green-100 p-2 text-sm text-green-800">
+          Imported and attached {imported} question(s) to this exam.
+        </p>
+      )}
+      {importError && (
+        <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
+          Import failed — nothing was added: {importError}
+        </p>
+      )}
+      {bulkError && (
+        <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
+          Couldn&apos;t add the selected questions: {bulkError}
+        </p>
+      )}
+
       <section className="flex flex-col gap-2">
         <h2 className="font-medium">Questions ({version?.examQuestions.length ?? 0})</h2>
         {(!version || version.examQuestions.length === 0) && (
@@ -156,40 +235,82 @@ export default async function ExamBuilderPage({
       </section>
 
       {canEdit && (
-        <section className="rounded border p-4">
-          <h2 className="mb-3 font-medium">Add a question from the bank</h2>
-          {availableQuestions.length === 0 && (
-            <p className="text-sm text-gray-500">
-              No questions in this course&apos;s bank yet — add some on the{" "}
-              <a href={`/courses/${exam.courseId}/questions`} className="underline">
-                question bank page
-              </a>{" "}
-              first.
+        <>
+          <section className="rounded border p-4">
+            <h2 className="mb-3 font-medium">Import from CSV directly into this exam</h2>
+            <p className="mb-3 text-xs text-gray-500">
+              Creates the questions in the course&apos;s reusable bank <em>and</em> attaches all of them to this exam
+              in one step. All-or-nothing, same as the question bank&apos;s import.{" "}
+              <a href="/templates/question-bank-template.csv" download className="underline">
+                Download the template
+              </a>
+              .
             </p>
-          )}
-          {availableQuestions.length > 0 && (
-            <form action={addQuestionAction} className="flex flex-col gap-3">
-              <label className="flex flex-col gap-1 text-sm">
-                Question
-                <select name="questionId" required className="rounded border px-3 py-2">
-                  {availableQuestions.map((q) => (
-                    <option key={q.id} value={q.id} disabled={usedQuestionIds.has(q.id)}>
-                      [{q.type}] {q.versions[0]?.prompt.slice(0, 60)}
-                      {usedQuestionIds.has(q.id) ? " (already added)" : ""}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Points
-                <input name="points" type="number" step="0.5" defaultValue={1} className="rounded border px-3 py-2" />
-              </label>
-              <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-                Add to exam
+            <form action={importCsvIntoExamAction} className="flex items-center gap-2">
+              <input name="file" type="file" accept=".csv,text/csv" required className="flex-1 text-sm" />
+              <button type="submit" className="rounded border px-3 py-2 text-sm">
+                Import into exam
               </button>
             </form>
+          </section>
+
+          {unusedQuestions.length > 0 && (
+            <section className="rounded border p-4">
+              <h2 className="mb-3 font-medium">Add multiple questions from the bank at once</h2>
+              <form action={addSelectedQuestionsAction} className="flex flex-col gap-2">
+                <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                  {unusedQuestions.map((q) => (
+                    <label key={q.id} className="flex items-start gap-2 text-sm">
+                      <input type="checkbox" name="questionIds" value={q.id} className="mt-1" />
+                      <span>
+                        [{q.type}] {q.versions[0]?.prompt.slice(0, 80)} ({q.versions[0]?.points} pt(s) default)
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <button type="submit" className="self-start rounded bg-black px-3 py-2 text-sm text-white">
+                  Add selected to exam
+                </button>
+                <p className="text-xs text-gray-500">Each question is added at its own default points.</p>
+              </form>
+            </section>
           )}
-        </section>
+
+          <section className="rounded border p-4">
+            <h2 className="mb-3 font-medium">Add one question with custom points</h2>
+            {availableQuestions.length === 0 && (
+              <p className="text-sm text-gray-500">
+                No questions in this course&apos;s bank yet — add some on the{" "}
+                <a href={`/courses/${exam.courseId}/questions`} className="underline">
+                  question bank page
+                </a>{" "}
+                first.
+              </p>
+            )}
+            {availableQuestions.length > 0 && (
+              <form action={addQuestionAction} className="flex flex-col gap-3">
+                <label className="flex flex-col gap-1 text-sm">
+                  Question
+                  <select name="questionId" required className="rounded border px-3 py-2">
+                    {availableQuestions.map((q) => (
+                      <option key={q.id} value={q.id} disabled={usedQuestionIds.has(q.id)}>
+                        [{q.type}] {q.versions[0]?.prompt.slice(0, 60)}
+                        {usedQuestionIds.has(q.id) ? " (already added)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-sm">
+                  Points
+                  <input name="points" type="number" step="0.5" defaultValue={1} className="rounded border px-3 py-2" />
+                </label>
+                <button type="submit" className="rounded bg-black px-3 py-2 text-white">
+                  Add to exam
+                </button>
+              </form>
+            )}
+          </section>
+        </>
       )}
 
       {canPublish && (

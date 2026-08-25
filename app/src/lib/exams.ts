@@ -180,6 +180,63 @@ export async function addExamQuestion(
   });
 }
 
+/**
+ * Bulk version of addExamQuestion — attaches several bank questions at
+ * once (each at its own default points, from the question's latest
+ * version) instead of one dropdown-pick-and-click per question. Every
+ * question is verified to belong to this tenant before any attachment
+ * happens; if one id is bogus, nothing is attached.
+ */
+export async function addExamQuestions(institutionId: string, actor: { role: Role }, examId: string, questionIds: string[]) {
+  assertCan(actor.role, "exam", "update");
+  if (questionIds.length === 0) {
+    return [];
+  }
+
+  const db = forTenant(institutionId);
+
+  const exam = await db.exam.findFirst({
+    where: { id: examId },
+    include: { versions: { where: { isActive: true }, take: 1 } },
+  });
+  if (!exam) {
+    throw new ExamNotFoundError(examId);
+  }
+  if (exam.status !== "DRAFT") {
+    throw new ExamNotEditableError(examId);
+  }
+  const activeVersion = exam.versions[0];
+  if (!activeVersion) {
+    throw new ExamNotEditableError(examId);
+  }
+
+  const questions = await db.question.findMany({
+    where: { id: { in: questionIds } },
+    include: { versions: { orderBy: { versionNumber: "desc" }, take: 1 } },
+  });
+  const missing = questionIds.find((id) => !questions.some((q) => q.id === id));
+  if (missing) {
+    throw new QuestionNotFoundError(missing);
+  }
+
+  let order = await db.examQuestion.count({ where: { examVersionId: activeVersion.id } });
+
+  return db.$transaction(
+    questions.map((question) => {
+      const latest = question.versions[0];
+      return db.examQuestion.create({
+        data: {
+          examVersionId: activeVersion.id,
+          questionId: question.id,
+          questionVersionId: latest.id,
+          order: order++,
+          points: latest.points,
+        },
+      });
+    })
+  );
+}
+
 /** Freezes the active version and marks the exam PUBLISHED. Irreversible in Phase 1 — no unpublish. */
 export async function publishExam(institutionId: string, actor: { role: Role }, examId: string) {
   assertCan(actor.role, "exam", "publish");

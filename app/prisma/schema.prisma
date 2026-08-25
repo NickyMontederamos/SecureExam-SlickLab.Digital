@@ -1,0 +1,317 @@
+// CM-Law SecureExam — Phase 1 data model
+// See docs/ARCHITECTURE_DECISIONS.md ADR-003 for why Prisma, and
+// src/lib/tenant-db.ts for how tenant isolation is enforced at the query layer.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  PLATFORM_ADMIN
+  INSTITUTION_ADMIN
+  FACULTY
+  PROCTOR
+  STUDENT
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  MULTIPLE_RESPONSE
+  TRUE_FALSE
+  ESSAY
+  SHORT_ANSWER
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum AttemptStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  INTERRUPTED
+  SUBMITTED
+  GRADED
+}
+
+enum AuditResult {
+  SUCCESS
+  DENIED
+  ERROR
+}
+
+/// A subscribing school/organization. Every tenant-scoped table carries
+/// institutionId; SUPER_ADMIN/PLATFORM_ADMIN users are the only ones allowed
+/// a null institutionId (they operate across tenants by design).
+model Institution {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users               User[]
+  courses             Course[]
+  questions           Question[]
+  exams               Exam[]
+  examAttempts        ExamAttempt[]
+  auditLogs           AuditLog[]
+  deviceRegistrations DeviceRegistration[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  institutionId  String?
+  institution    Institution? @relation(fields: [institutionId], references: [id])
+  email          String       @unique
+  passwordHash   String
+  name           String
+  role           Role
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  coursesTaught       CourseFaculty[]
+  enrollments         Enrollment[]
+  questionsCreated    Question[]        @relation("QuestionCreatedBy")
+  examsCreated        Exam[]            @relation("ExamCreatedBy")
+  examAttempts        ExamAttempt[]
+  auditLogs           AuditLog[]
+  deviceRegistrations DeviceRegistration[]
+
+  @@index([institutionId])
+}
+
+model Course {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  code          String
+  name          String
+  academicYear  String
+  createdAt     DateTime    @default(now())
+
+  faculty     CourseFaculty[]
+  enrollments Enrollment[]
+  questions   Question[]
+  exams       Exam[]
+
+  @@unique([institutionId, code, academicYear])
+  @@index([institutionId])
+}
+
+model CourseFaculty {
+  id            String      @id @default(cuid())
+  institutionId String
+  courseId      String
+  course        Course      @relation(fields: [courseId], references: [id])
+  userId        String
+  user          User        @relation(fields: [userId], references: [id])
+
+  @@unique([courseId, userId])
+  @@index([institutionId])
+}
+
+model Enrollment {
+  id            String   @id @default(cuid())
+  institutionId String
+  courseId      String
+  course        Course   @relation(fields: [courseId], references: [id])
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  enrolledAt    DateTime @default(now())
+
+  @@unique([courseId, userId])
+  @@index([institutionId])
+}
+
+/// A question is a stable identity; its gradeable content lives in
+/// versions so a past exam attempt can permanently reference the exact
+/// wording/answer key it was graded against.
+model Question {
+  id                 String       @id @default(cuid())
+  institutionId      String
+  institution        Institution  @relation(fields: [institutionId], references: [id])
+  courseId           String?
+  course             Course?      @relation(fields: [courseId], references: [id])
+  type               QuestionType
+  difficulty         String?
+  tags               String[]
+  learningObjectives String[]
+  createdById        String
+  createdBy          User         @relation("QuestionCreatedBy", fields: [createdById], references: [id])
+  createdAt          DateTime     @default(now())
+
+  versions      QuestionVersion[]
+  examQuestions ExamQuestion[]
+
+  @@index([institutionId])
+  @@index([courseId])
+}
+
+model QuestionVersion {
+  id            String   @id @default(cuid())
+  questionId    String
+  question      Question @relation(fields: [questionId], references: [id])
+  versionNumber Int
+  prompt        String
+  /// Choices for MC/MR/TF; null for essay/short-answer.
+  choices       Json?
+  /// Correct answer key; withheld from student-facing API responses.
+  correctAnswer Json?
+  points        Float
+  createdAt     DateTime @default(now())
+
+  examQuestions ExamQuestion[]
+
+  @@unique([questionId, versionNumber])
+}
+
+model Exam {
+  id            String      @id @default(cuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  courseId      String
+  course        Course      @relation(fields: [courseId], references: [id])
+  title         String
+  status        ExamStatus  @default(DRAFT)
+  createdById   String
+  createdBy     User        @relation("ExamCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now())
+
+  versions ExamVersion[]
+
+  @@index([institutionId])
+  @@index([courseId])
+}
+
+/// Immutable once published (master prompt §11: "Do not silently mutate the
+/// active exam version"). Edits after publish create a new version instead.
+model ExamVersion {
+  id                  String   @id @default(cuid())
+  examId              String
+  exam                Exam     @relation(fields: [examId], references: [id])
+  versionNumber       Int
+  isActive            Boolean  @default(true)
+  instructions        String?
+  timeLimitMinutes    Int
+  availableFrom       DateTime?
+  availableUntil      DateTime?
+  allowBacktracking   Boolean  @default(true)
+  randomizeQuestions  Boolean  @default(false)
+  randomizeAnswers    Boolean  @default(false)
+  reviewModeEnabled   Boolean  @default(true)
+  calculatorAllowed   Boolean  @default(false)
+  attachmentsAllowed  Boolean  @default(false)
+  securityPolicy      Json?
+  createdAt           DateTime @default(now())
+
+  examQuestions ExamQuestion[]
+  examAttempts  ExamAttempt[]
+
+  @@unique([examId, versionNumber])
+}
+
+model ExamQuestion {
+  id                String          @id @default(cuid())
+  examVersionId     String
+  examVersion       ExamVersion     @relation(fields: [examVersionId], references: [id])
+  questionId        String
+  question          Question        @relation(fields: [questionId], references: [id])
+  questionVersionId String
+  questionVersion   QuestionVersion @relation(fields: [questionVersionId], references: [id])
+  order             Int
+  points            Float
+
+  examAnswers ExamAnswer[]
+
+  @@unique([examVersionId, questionId])
+}
+
+model ExamAttempt {
+  id                  String        @id @default(cuid())
+  institutionId       String
+  institution         Institution   @relation(fields: [institutionId], references: [id])
+  examVersionId       String
+  examVersion         ExamVersion   @relation(fields: [examVersionId], references: [id])
+  studentId           String
+  student             User          @relation(fields: [studentId], references: [id])
+  status              AttemptStatus @default(NOT_STARTED)
+  startedAt           DateTime?
+  submittedAt         DateTime?
+  deviceId            String?
+  timeRemainingSeconds Int?
+  createdAt           DateTime      @default(now())
+
+  answers    ExamAnswer[]
+  submission Submission?
+
+  @@unique([examVersionId, studentId])
+  @@index([institutionId])
+}
+
+model ExamAnswer {
+  id             String       @id @default(cuid())
+  attemptId      String
+  attempt        ExamAttempt  @relation(fields: [attemptId], references: [id])
+  examQuestionId String
+  examQuestion   ExamQuestion @relation(fields: [examQuestionId], references: [id])
+  responseJson   Json?
+  isFlagged      Boolean      @default(false)
+  savedAt        DateTime     @updatedAt
+
+  @@unique([attemptId, examQuestionId])
+}
+
+model Submission {
+  id                  String      @id @default(cuid())
+  attemptId           String      @unique
+  attempt             ExamAttempt @relation(fields: [attemptId], references: [id])
+  encryptedPayloadRef  String?
+  signature            String?
+  receiptId            String      @unique @default(cuid())
+  uploadedAt            DateTime    @default(now())
+  verifiedAt            DateTime?
+}
+
+/// WHO / WHAT / WHEN / WHERE / RESULT (master prompt §20). Append-only in
+/// practice — application code must never expose an update/delete path.
+model AuditLog {
+  id            String       @id @default(cuid())
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+  actorUserId   String?
+  actor         User?        @relation(fields: [actorUserId], references: [id])
+  action        String
+  resourceType  String
+  resourceId    String?
+  result        AuditResult
+  metadata      Json?
+  ipAddress     String?
+  createdAt     DateTime     @default(now())
+
+  @@index([institutionId])
+  @@index([actorUserId])
+  @@index([createdAt])
+}
+
+model DeviceRegistration {
+  id                String      @id @default(cuid())
+  institutionId     String
+  institution       Institution @relation(fields: [institutionId], references: [id])
+  userId            String
+  user              User        @relation(fields: [userId], references: [id])
+  deviceFingerprint String
+  registeredAt      DateTime    @default(now())
+  lastSeenAt        DateTime    @updatedAt
+
+  @@unique([userId, deviceFingerprint])
+  @@index([institutionId])
+}

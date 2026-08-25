@@ -40,11 +40,15 @@ export default async function CourseExamsPage({
 
     const title = String(formData.get("title") ?? "").trim();
     const timeLimitMinutes = Number(formData.get("timeLimitMinutes") ?? 60);
+    const availableFromRaw = String(formData.get("availableFrom") ?? "");
+    const availableUntilRaw = String(formData.get("availableUntil") ?? "");
 
     await createExam(actorInstitutionId, { id: actorId, role: actorRole }, {
       courseId,
       title,
       timeLimitMinutes,
+      availableFrom: availableFromRaw ? new Date(availableFromRaw) : undefined,
+      availableUntil: availableUntilRaw ? new Date(availableUntilRaw) : undefined,
     });
 
     revalidatePath(`/courses/${courseId}/exams`);
@@ -104,6 +108,14 @@ export default async function CourseExamsPage({
             <label className="flex flex-col gap-1 text-sm">
               Time limit (minutes)
               <input name="timeLimitMinutes" type="number" defaultValue={60} className="rounded border px-3 py-2" />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Available from (optional)
+              <input name="availableFrom" type="datetime-local" className="rounded border px-3 py-2" />
+            </label>
+            <label className="flex flex-col gap-1 text-sm">
+              Available until (optional)
+              <input name="availableUntil" type="datetime-local" className="rounded border px-3 py-2" />
             </label>
             <button type="submit" className="rounded bg-black px-3 py-2 text-white">
               Create exam (draft)

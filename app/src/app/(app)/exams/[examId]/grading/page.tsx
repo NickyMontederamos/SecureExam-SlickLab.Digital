@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { ExamNotFoundError, getExam } from "@/lib/exams";
 import { listAttemptsForExam } from "@/lib/grading";
-import { listIntegrityReviewsForExam } from "@/lib/integrity";
+import { listIntegrityReviewsForExam, STRIKE_EVENT_TYPES } from "@/lib/integrity";
 import { ForbiddenError } from "@/lib/rbac";
 
 export default async function ExamGradingPage({ params }: { params: Promise<{ examId: string }> }) {
@@ -44,18 +44,21 @@ export default async function ExamGradingPage({ params }: { params: Promise<{ ex
       {integrityReviews.length > 0 && (
         <section className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-3">
           <h2 className="font-medium text-amber-900">Pending integrity review ({integrityReviews.length})</h2>
-          {integrityReviews.map((attempt) => (
-            <a
-              key={attempt.id}
-              href={`/attempts/${attempt.id}/review`}
-              className="flex items-center justify-between rounded border border-amber-300 bg-white p-3 text-sm hover:bg-amber-50"
-            >
-              <span>{attempt.student.name}</span>
-              <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
-                {attempt.events.length} warning(s) — paused
-              </span>
-            </a>
-          ))}
+          {integrityReviews.map((attempt) => {
+            const strikeCount = attempt.events.filter((e) => STRIKE_EVENT_TYPES.includes(e.type)).length;
+            return (
+              <a
+                key={attempt.id}
+                href={`/attempts/${attempt.id}/review`}
+                className="flex items-center justify-between rounded border border-amber-300 bg-white p-3 text-sm hover:bg-amber-50"
+              >
+                <span>{attempt.student.name}</span>
+                <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
+                  {strikeCount} strike(s) — paused
+                </span>
+              </a>
+            );
+          })}
         </section>
       )}
 

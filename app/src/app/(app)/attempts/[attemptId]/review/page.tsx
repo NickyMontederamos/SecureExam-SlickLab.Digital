@@ -2,14 +2,17 @@ import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { AttemptNotFoundError } from "@/lib/attempts";
-import { getIntegrityReview, resolveIntegrityReview } from "@/lib/integrity";
+import { getIntegrityReview, resolveIntegrityReview, STRIKE_EVENT_TYPES } from "@/lib/integrity";
 import { ForbiddenError } from "@/lib/rbac";
 
 const EVENT_LABELS: Record<string, string> = {
-  WINDOW_BLUR: "Left the exam window/tab",
-  VISIBILITY_HIDDEN: "Switched away from the exam tab",
+  WINDOW_BLUR: "Alt+Tab or window switch detected",
+  VISIBILITY_HIDDEN: "Switched to another browser tab",
   FULLSCREEN_EXIT: "Exited fullscreen",
+  NETWORK_OFFLINE: "Network connection lost",
+  NETWORK_ONLINE: "Network connection restored",
 };
+
 
 export default async function IntegrityReviewPage({ params }: { params: Promise<{ attemptId: string }> }) {
   const session = await auth();
@@ -74,12 +77,20 @@ export default async function IntegrityReviewPage({ params }: { params: Promise<
           focus because of an OS notification isn&apos;t automatically misconduct.
         </p>
         <ul className="flex flex-col gap-2">
-          {attempt.events.map((event) => (
-            <li key={event.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-              <span>{EVENT_LABELS[event.type] ?? event.type}</span>
-              <span className="text-xs text-gray-500">{event.occurredAt.toLocaleString()}</span>
-            </li>
-          ))}
+          {attempt.events.map((event) => {
+            const isStrike = STRIKE_EVENT_TYPES.includes(event.type);
+            return (
+              <li key={event.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
+                <span className="flex items-center gap-2">
+                  {EVENT_LABELS[event.type] ?? event.type}
+                  {!isStrike && (
+                    <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">Context only — not a strike</span>
+                  )}
+                </span>
+                <span className="text-xs text-gray-500">{event.occurredAt.toLocaleString()}</span>
+              </li>
+            );
+          })}
         </ul>
       </section>
 

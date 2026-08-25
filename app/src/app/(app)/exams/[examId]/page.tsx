@@ -6,8 +6,16 @@ import { ExamEntryGate } from "@/components/ExamEntryGate";
 import { addExamQuestion, addExamQuestions, ExamNotFoundError, getExam, publishExam, QuestionNotFoundError } from "@/lib/exams";
 import { listQuestionsForCourse } from "@/lib/questions";
 import { importQuestionsFromCsv, QuestionImportValidationError } from "@/lib/question-import";
-import { findAttemptForStudent } from "@/lib/attempts";
-import { startAttemptAction } from "./actions";
+import { bookAttempt, findAttemptForStudent } from "@/lib/attempts";
+import { beginAttemptAction } from "./actions";
+
+function formatWindow(from: Date | null, until: Date | null): string | null {
+  if (!from && !until) return null;
+  const fmt = (d: Date) => d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  if (from && until) return `${fmt(from)} – ${fmt(until)}`;
+  if (from) return `Opens ${fmt(from)}`;
+  return `Closes ${fmt(until!)}`;
+}
 
 export default async function ExamBuilderPage({
   params,
@@ -40,6 +48,17 @@ export default async function ExamBuilderPage({
 
   if (session.user.role === "STUDENT") {
     const myAttempt = version ? await findAttemptForStudent(institutionId, session.user, version.id) : null;
+    const windowLabel = version ? formatWindow(version.availableFrom, version.availableUntil) : null;
+
+    async function confirmBookingAction() {
+      "use server";
+      const authSession = await auth();
+      if (!authSession?.user?.institutionId) {
+        redirect("/login");
+      }
+      await bookAttempt(authSession.user.institutionId, authSession.user, examId);
+      revalidatePath(`/exams/${examId}`);
+    }
 
     return (
       <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
@@ -58,17 +77,24 @@ export default async function ExamBuilderPage({
         {!myAttempt && (
           <div className="flex flex-col gap-4 rounded border p-4">
             <div>
-              <h2 className="mb-2 font-medium">Exam Rules</h2>
-              <ul className="list-disc space-y-1 pl-5 text-sm text-gray-600">
-                <li>You get one attempt at this exam — there are no retakes.</li>
-                <li>The timer starts the moment you begin and cannot be paused.</li>
-                <li>Leaving the exam window or switching tabs is logged and limited.</li>
-                <li>You may flag a question and return to it before submitting.</li>
-                <li>Submit before time runs out — the exam auto-submits at zero.</li>
-              </ul>
+              <h2 className="mb-2 font-medium">Book This Exam</h2>
+              <p className="text-sm text-gray-500">Available: {windowLabel ?? "No fixed window — book anytime"}</p>
             </div>
-            <ExamEntryGate examId={examId} startAttemptAction={startAttemptAction} />
+            <form action={confirmBookingAction}>
+              <button type="submit" className="rounded bg-black px-3 py-2 text-white">
+                Confirm Booking
+              </button>
+            </form>
           </div>
+        )}
+        {myAttempt?.status === "NOT_STARTED" && (
+          <ExamEntryGate
+            attemptId={myAttempt.id}
+            examTitle={exam.title}
+            windowLabel={windowLabel}
+            confirmationCode={myAttempt.id}
+            beginAttemptAction={beginAttemptAction}
+          />
         )}
         {myAttempt?.status === "IN_PROGRESS" && (
           <a href={`/attempts/${myAttempt.id}`} className="rounded bg-black px-3 py-2 text-center text-white">

@@ -4,8 +4,11 @@ import { createQuestion } from "../questions";
 import { addExamQuestion, createExam, publishExam } from "../exams";
 import {
   AttemptAlreadyFinishedError,
+  AttemptNotFoundError,
   AttemptOwnershipError,
   NotEnrolledError,
+  beginBookedAttempt,
+  bookAttempt,
   getAttemptForTaking,
   getAttemptResult,
   saveAnswers,
@@ -222,5 +225,108 @@ describe("exam attempts (start / save / submit / grade)", () => {
     const result = await getAttemptResult(institutionA.id, { id: faculty.id, role: "FACULTY" }, attempts[0].id);
     const essayRow = result.breakdown.find((r) => r.maxPoints === 10);
     expect(essayRow?.pointsAwarded).toBe(10);
+  });
+});
+
+describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
+  const runId = Math.random().toString(36).slice(2, 10);
+  let institutionA: { id: string };
+  let courseA: { id: string };
+  let faculty: { id: string };
+  let student: { id: string };
+  let examId: string;
+
+  beforeAll(async () => {
+    const platform = forPlatform();
+    institutionA = await platform.institution.create({
+      data: { name: `Booking Tenant ${runId}`, slug: `booking-tenant-${runId}` },
+    });
+    courseA = await platform.course.create({
+      data: { institutionId: institutionA.id, code: "LAW601", name: "Booking Test Course", academicYear: "2026-2027" },
+    });
+    faculty = await platform.user.create({
+      data: { institutionId: institutionA.id, email: `booking-faculty-${runId}@test.local`, name: "Faculty", role: "FACULTY", passwordHash: "x" },
+    });
+    student = await platform.user.create({
+      data: { institutionId: institutionA.id, email: `booking-student-${runId}@test.local`, name: "Student", role: "STUDENT", passwordHash: "x" },
+    });
+    await platform.enrollment.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: student.id } });
+
+    const { exam } = await createExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, {
+      courseId: courseA.id,
+      title: "Booking Test Exam",
+      timeLimitMinutes: 45,
+    });
+    examId = exam.id;
+
+    const { question } = await createQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, {
+      courseId: courseA.id,
+      type: "MULTIPLE_CHOICE",
+      prompt: "Pick one.",
+      choices: [{ id: "0", text: "A" }, { id: "1", text: "B" }],
+      correctAnswer: { choiceIds: ["0"] },
+      points: 1,
+    });
+    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId, questionId: question.id, points: 1 });
+    await publishExam(institutionA.id, { role: "FACULTY" }, examId);
+  });
+
+  afterAll(async () => {
+    const platform = forPlatform();
+    await platform.attemptEvent.deleteMany({ where: { attempt: { institutionId: institutionA.id } } });
+    await platform.submission.deleteMany({ where: { attempt: { institutionId: institutionA.id } } });
+    await platform.examAnswer.deleteMany({ where: { attempt: { institutionId: institutionA.id } } });
+    await platform.examAttempt.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.examQuestion.deleteMany({ where: { examVersion: { exam: { institutionId: institutionA.id } } } });
+    await platform.examVersion.deleteMany({ where: { exam: { institutionId: institutionA.id } } });
+    await platform.exam.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
+    await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.course.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.institution.deleteMany({ where: { id: institutionA.id } });
+  });
+
+  it("books a slot as NOT_STARTED with no timer running, and is idempotent", async () => {
+    const first = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
+    expect(first.status).toBe("NOT_STARTED");
+    expect(first.startedAt).toBeNull();
+    expect(first.timeRemainingSeconds).toBe(45 * 60);
+
+    const second = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
+    expect(second.id).toBe(first.id);
+    expect(second.status).toBe("NOT_STARTED");
+  });
+
+  it("refuses to begin an attempt that was never booked", async () => {
+    await expect(
+      beginBookedAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, "not-a-real-attempt-id")
+    ).rejects.toThrow(AttemptNotFoundError);
+  });
+
+  it("begins a booked attempt (starts the timer), and resuming afterward is a no-op", async () => {
+    const booked = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
+    expect(booked.status).toBe("NOT_STARTED");
+
+    const begun = await beginBookedAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, booked.id);
+    expect(begun.status).toBe("IN_PROGRESS");
+    expect(begun.startedAt).not.toBeNull();
+
+    // Calling it again (e.g. a page reload mid-exam) must not reset the timer.
+    const resumed = await beginBookedAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, booked.id);
+    expect(resumed.startedAt?.getTime()).toBe(begun.startedAt?.getTime());
+
+    await expect(
+      submitAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, booked.id)
+    ).resolves.toBeDefined();
+
+    // Once finished, neither booking again nor beginning again is allowed.
+    await expect(
+      bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId)
+    ).rejects.toThrow(AttemptAlreadyFinishedError);
+    await expect(
+      beginBookedAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, booked.id)
+    ).rejects.toThrow(AttemptAlreadyFinishedError);
   });
 });

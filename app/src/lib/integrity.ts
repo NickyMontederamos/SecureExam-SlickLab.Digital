@@ -7,6 +7,16 @@ import { ExamNotFoundError } from "./exams";
 /** How many warning-worthy signals before an attempt auto-pauses. Not institution-configurable yet — see docs/PITCH_ROADMAP.md. */
 const WARNING_THRESHOLD = 3;
 
+/**
+ * Only these count toward the 3-strike threshold. NETWORK_OFFLINE/ONLINE are
+ * logged (so faculty see them in the review trail for context) but never
+ * counted — a dropped connection isn't the student's fault and must never
+ * read as misconduct, per the same principle already stated on the review screen.
+ * Exported so every "how many strikes" display (grading list, review page)
+ * reads from one definition instead of each guessing its own copy.
+ */
+export const STRIKE_EVENT_TYPES: AttemptEventType[] = ["WINDOW_BLUR", "VISIBILITY_HIDDEN", "FULLSCREEN_EXIT"];
+
 export class AttemptNotInProgressError extends Error {
   constructor(attemptId: string) {
     super(`Attempt ${attemptId} is not in progress`);
@@ -47,7 +57,11 @@ export async function recordAttemptEvent(
 
   await db.attemptEvent.create({ data: { attemptId, type } });
 
-  const warningCount = await db.attemptEvent.count({ where: { attemptId } });
+  // Always computed from STRIKE_EVENT_TYPES only, regardless of what type
+  // was just recorded — logging a network event must never move this
+  // number, so the visible "Warning X of 3" banner never reacts to a
+  // connection drop.
+  const warningCount = await db.attemptEvent.count({ where: { attemptId, type: { in: STRIKE_EVENT_TYPES } } });
   const paused = warningCount >= WARNING_THRESHOLD;
 
   if (paused) {
@@ -57,10 +71,10 @@ export async function recordAttemptEvent(
   return { warningCount, paused };
 }
 
-/** Current warning count for one attempt — read fresh from the event log on every page load, never cached on the attempt row. */
+/** Current warning count for one attempt — read fresh from the event log on every page load, never cached on the attempt row. Network events don't count — see STRIKE_EVENT_TYPES. */
 export async function getWarningCount(institutionId: string, attemptId: string) {
   const db = forTenant(institutionId);
-  return db.attemptEvent.count({ where: { attemptId } });
+  return db.attemptEvent.count({ where: { attemptId, type: { in: STRIKE_EVENT_TYPES } } });
 }
 
 /** Attempts currently paused for integrity review, for the faculty queue. */

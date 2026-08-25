@@ -15,8 +15,11 @@ const WARNING_THRESHOLD = 3;
  * never decides "3 strikes" itself; it just displays whatever the server
  * says and reacts if the server reports the attempt just got auto-paused.
  *
- * Deliberately NOT wired to copy/paste — see the pitch-roadmap discussion:
- * a student pasting into the in-exam Notepad shouldn't cost them a strike.
+ * Also reports network connectivity drops/recoveries — logged for the
+ * faculty review trail's context, but never counted toward the warning
+ * threshold (see STRIKE_EVENT_TYPES in integrity.ts): a bad connection isn't
+ * the student's fault. Same reasoning is why this is deliberately NOT wired
+ * to copy/paste — pasting into the in-exam Notepad shouldn't cost a strike either.
  */
 export function IntegrityMonitor({
   attemptId,
@@ -59,14 +62,24 @@ export function IntegrityMonitor({
         report("FULLSCREEN_EXIT");
       }
     }
+    function onOffline() {
+      report("NETWORK_OFFLINE");
+    }
+    function onOnline() {
+      report("NETWORK_ONLINE");
+    }
 
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVisibilityChange);
     document.addEventListener("fullscreenchange", onFullscreenChange);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
     return () => {
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVisibilityChange);
       document.removeEventListener("fullscreenchange", onFullscreenChange);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
     };
   }, [attemptId, recordEventAction, router]);
 

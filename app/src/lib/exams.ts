@@ -48,6 +48,9 @@ export interface CreateExamInput {
   allowBacktracking?: boolean;
   randomizeQuestions?: boolean;
   randomizeAnswers?: boolean;
+  /** Booking window shown to students (see docs/PITCH_ROADMAP.md's booking flow) — optional; a version with neither set has no advertised window. */
+  availableFrom?: Date;
+  availableUntil?: Date;
 }
 
 /** Creates an exam and its first (DRAFT, active) version atomically. */
@@ -82,6 +85,8 @@ export async function createExam(institutionId: string, actor: { id: string; rol
         allowBacktracking: input.allowBacktracking ?? true,
         randomizeQuestions: input.randomizeQuestions ?? false,
         randomizeAnswers: input.randomizeAnswers ?? false,
+        availableFrom: input.availableFrom,
+        availableUntil: input.availableUntil,
       },
     });
 

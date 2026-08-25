@@ -62,6 +62,14 @@ test.describe.serial("full exam lifecycle", () => {
 
     await page.click("text=LAW101");
     await page.click(`text=${examTitle}`);
+    // Book -> receipt -> Exam Rules -> gate sequence -> exam. Booking and
+    // beginning are two separate steps now (docs/PITCH_ROADMAP.md's booking
+    // flow) — confirm the booking first and wait for the receipt to render
+    // before continuing, same "wait for the actual UI evidence" discipline
+    // as the add-question/publish race fixed above.
+    await page.click('button:has-text("Confirm Booking")');
+    await expect(page.getByText("Booking Confirmed")).toBeVisible();
+    await page.click('button:has-text("Continue to Exam Rules")');
     await page.check('input[type="checkbox"]'); // agree to the exam rules
     await page.click('button:has-text("Start Exam")');
     // The click kicks off ExamEntryGate's mocked device/ID/room-scan/proctor

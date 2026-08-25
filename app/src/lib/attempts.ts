@@ -76,7 +76,7 @@ export async function startAttempt(institutionId: string, actor: { id: string; r
 
   const existing = await db.examAttempt.findFirst({ where: { examVersionId: version.id, studentId: actor.id } });
   if (existing) {
-    if (existing.status === "SUBMITTED" || existing.status === "GRADED") {
+    if (existing.status === "SUBMITTED" || existing.status === "GRADED" || existing.status === "TERMINATED") {
       throw new AttemptAlreadyFinishedError(existing.id);
     }
     return existing;
@@ -92,6 +92,90 @@ export async function startAttempt(institutionId: string, actor: { id: string; r
       timeRemainingSeconds: version.timeLimitMinutes * 60,
     } as never,
   });
+}
+
+/**
+ * Reserves a student's slot at a published exam (status NOT_STARTED, no
+ * timer running yet) — the first step of the Book → Confirm → Receipt flow
+ * (see docs/PITCH_ROADMAP.md). Same enrollment/publish checks as
+ * startAttempt; calling it again while NOT_STARTED or IN_PROGRESS just
+ * returns the existing booking (idempotent), same no-retake refusal once
+ * finished.
+ */
+export async function bookAttempt(institutionId: string, actor: { id: string; role: Role }, examId: string) {
+  assertCan(actor.role, "exam_attempt", "create");
+
+  const db = forTenant(institutionId);
+
+  const exam = await db.exam.findFirst({
+    where: { id: examId },
+    include: { versions: { where: { isActive: true }, take: 1 } },
+  });
+  if (!exam) {
+    throw new ExamNotFoundError(examId);
+  }
+  if (exam.status !== "PUBLISHED") {
+    throw new ExamNotPublishedError(examId);
+  }
+  const version = exam.versions[0];
+  if (!version) {
+    throw new ExamNotPublishedError(examId);
+  }
+
+  if (actor.role === "STUDENT") {
+    const enrollment = await db.enrollment.findFirst({ where: { courseId: exam.courseId, userId: actor.id } });
+    if (!enrollment) {
+      throw new NotEnrolledError(exam.courseId);
+    }
+  }
+
+  const existing = await db.examAttempt.findFirst({ where: { examVersionId: version.id, studentId: actor.id } });
+  if (existing) {
+    if (existing.status === "SUBMITTED" || existing.status === "GRADED" || existing.status === "TERMINATED") {
+      throw new AttemptAlreadyFinishedError(existing.id);
+    }
+    return existing;
+  }
+
+  return db.examAttempt.create({
+    data: {
+      examVersionId: version.id,
+      studentId: actor.id,
+      status: "NOT_STARTED",
+      timeRemainingSeconds: version.timeLimitMinutes * 60,
+    } as never,
+  });
+}
+
+/**
+ * Begins an already-booked attempt's timer — called after the entry-gate
+ * sequence completes, not the moment "Start Exam" is clicked (same
+ * timer-doesn't-burn-during-the-gate reasoning as the old direct
+ * startAttempt call). Never creates a row itself — a booking (see
+ * bookAttempt) must already exist. NOT_STARTED -> IN_PROGRESS with
+ * startedAt set now; IN_PROGRESS is a no-op resume, matching startAttempt's
+ * existing resume behavior for callers that skip booking entirely (tests,
+ * mainly — see attempts.test.ts).
+ */
+export async function beginBookedAttempt(institutionId: string, actor: { id: string; role: Role }, attemptId: string) {
+  assertCan(actor.role, "exam_attempt", "take");
+
+  const db = forTenant(institutionId);
+
+  const attempt = await db.examAttempt.findFirst({ where: { id: attemptId } });
+  if (!attempt) {
+    throw new AttemptNotFoundError(attemptId);
+  }
+  if (attempt.studentId !== actor.id) {
+    throw new AttemptOwnershipError(attemptId);
+  }
+  if (attempt.status === "NOT_STARTED") {
+    return db.examAttempt.update({ where: { id: attemptId }, data: { status: "IN_PROGRESS", startedAt: new Date() } });
+  }
+  if (attempt.status === "IN_PROGRESS") {
+    return attempt;
+  }
+  throw new AttemptAlreadyFinishedError(attemptId);
 }
 
 /** For the exam landing page: does this student already have an attempt (any status) at this exam version? */

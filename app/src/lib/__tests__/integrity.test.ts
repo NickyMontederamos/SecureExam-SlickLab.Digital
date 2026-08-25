@@ -18,6 +18,7 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
   let courseA: { id: string };
   let faculty: { id: string };
   let student: { id: string };
+  let studentTwo: { id: string };
   let examId: string;
 
   beforeAll(async () => {
@@ -35,6 +36,10 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
       data: { institutionId: institutionA.id, email: `integrity-student-${runId}@test.local`, name: "Student", role: "STUDENT", passwordHash: "x" },
     });
     await platform.enrollment.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: student.id } });
+    studentTwo = await platform.user.create({
+      data: { institutionId: institutionA.id, email: `integrity-student2-${runId}@test.local`, name: "Student Two", role: "STUDENT", passwordHash: "x" },
+    });
+    await platform.enrollment.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: studentTwo.id } });
 
     const { exam } = await createExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, {
       courseId: courseA.id,
@@ -134,9 +139,29 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
     expect(stillTerminated?.status).toBe("TERMINATED");
   });
 
+  it("logs network connectivity events but never counts them toward the strike threshold", async () => {
+    const attempt = await startAttempt(institutionA.id, { id: studentTwo.id, role: "STUDENT" }, examId);
+
+    const offline = await recordAttemptEvent(institutionA.id, { id: studentTwo.id, role: "STUDENT" }, attempt.id, "NETWORK_OFFLINE");
+    expect(offline).toEqual({ warningCount: 0, paused: false });
+
+    const online = await recordAttemptEvent(institutionA.id, { id: studentTwo.id, role: "STUDENT" }, attempt.id, "NETWORK_ONLINE");
+    expect(online).toEqual({ warningCount: 0, paused: false });
+
+    // A real strike still counts normally alongside the (uncounted) network events.
+    const blur = await recordAttemptEvent(institutionA.id, { id: studentTwo.id, role: "STUDENT" }, attempt.id, "WINDOW_BLUR");
+    expect(blur).toEqual({ warningCount: 1, paused: false });
+
+    const platform = forPlatform();
+    const allEvents = await platform.attemptEvent.findMany({ where: { attemptId: attempt.id } });
+    expect(allEvents).toHaveLength(3); // both network events ARE logged, just not counted
+  });
+
   it("a student can never load the integrity review screen, not even their own", async () => {
-    const attempt = await startAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
-    await recordAttemptEvent(institutionA.id, { id: student.id, role: "STUDENT" }, attempt.id, "WINDOW_BLUR");
+    // A fresh student — `student` already has a TERMINATED attempt on this
+    // exam from the previous test, and Phase 1 has no retakes.
+    const attempt = await startAttempt(institutionA.id, { id: studentTwo.id, role: "STUDENT" }, examId);
+    await recordAttemptEvent(institutionA.id, { id: studentTwo.id, role: "STUDENT" }, attempt.id, "WINDOW_BLUR");
 
     await expect(
       getIntegrityReview(institutionA.id, { role: "STUDENT" }, attempt.id)

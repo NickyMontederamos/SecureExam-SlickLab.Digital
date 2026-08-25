@@ -51,6 +51,11 @@ enum AttemptEventType {
   WINDOW_BLUR
   VISIBILITY_HIDDEN
   FULLSCREEN_EXIT
+  /// Logged for faculty context only — never counted toward the 3-strike
+  /// threshold (see integrity.ts's STRIKE_EVENT_TYPES). A dropped connection
+  /// isn't the student's fault and must never be treated as misconduct.
+  NETWORK_OFFLINE
+  NETWORK_ONLINE
 }
 
 enum AuditResult {

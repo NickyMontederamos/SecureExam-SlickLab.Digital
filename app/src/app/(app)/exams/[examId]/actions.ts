@@ -1,20 +1,19 @@
 "use server";
 
 import { auth } from "@/auth";
-import { startAttempt } from "@/lib/attempts";
+import { beginBookedAttempt } from "@/lib/attempts";
 
 /**
- * Starts a student's attempt. Called from the client-side ExamEntryGate only
- * after its mock device/ID/room-scan/proctor sequence finishes — not the
- * moment "Book & Start Exam" is clicked — so the exam timer (which starts
- * from this call, see attempts.ts) doesn't burn time on the simulated gate.
+ * Called from ExamEntryGate only after its mocked device/ID/room-scan/
+ * proctor sequence finishes — not the moment "Start Exam" is clicked — so
+ * the exam timer (which starts from this call, see beginBookedAttempt)
+ * doesn't burn time on the simulated gate.
  */
-export async function startAttemptAction(examId: string) {
+export async function beginAttemptAction(attemptId: string) {
   const session = await auth();
   if (!session?.user?.id || !session.user.institutionId) {
     throw new Error("Not authenticated");
   }
 
-  const attempt = await startAttempt(session.user.institutionId, session.user, examId);
-  return attempt.id;
+  await beginBookedAttempt(session.user.institutionId, session.user, attemptId);
 }

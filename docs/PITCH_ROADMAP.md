@@ -89,9 +89,19 @@ Cheapest, highest-visibility pass. Builds on infrastructure that already exists
       `attempts.test.ts`.
 - [x] **In-exam tools: Calculator + Notepad** — `src/components/ExamToolbar.tsx`,
       floating client-side widgets, no backend needed.
-- [x] **"Book Exam" framing** — exams already only ever show from a student's
-      enrolled courses (confirmed — no new access-control surface needed); merged
-      into the Exam Rules screen as "Book & Start Exam" rather than a separate step.
+- [x] **Real booking flow, superseding the earlier "merge into one screen" call**:
+      Book (see the exam's available window) → Confirm Booking → Receipt → Exam
+      Rules → gate sequence → exam. Uses `ExamVersion.availableFrom`/`availableUntil`
+      (already in the schema, now exposed on exam creation) and the previously-unused
+      `AttemptStatus.NOT_STARTED` for the booked-but-not-begun state. New
+      `bookAttempt()`/`beginBookedAttempt()` in `attempts.ts`, alongside the
+      original `startAttempt()` (kept as-is so existing tests/call sites are
+      unaffected). Confirmation code shown on the receipt is the attempt id.
+      **Noted for later hardening, explicitly deferred by the user's own call**:
+      the booked window doesn't gate *when* Start Exam can be clicked yet —
+      it's available immediately after booking, on purpose, while the app is
+      still being tested. A real deployment should disable Start Exam until
+      the window opens; tracked here so it isn't forgotten.
 - [x] **One question at a time**, with a numbered palette to jump between
       questions and flagged ones marked with a dot (`src/components/ExamQuestionPager.tsx`).
       Client-side only — every question's fieldset stays mounted in the one
@@ -118,9 +128,18 @@ versus retrofitting later. The schema already has unused scaffolding for exactly
 this: `AttemptStatus.INTERRUPTED` and `ExamVersion.securityPolicy Json?`.
 
 - [x] **`AttemptEvent` table** (new, additive — does not replace `ExamAttempt`/
-      `ExamAnswer`): records `WINDOW_BLUR`, `VISIBILITY_HIDDEN`, `FULLSCREEN_EXIT`
-      signals (`src/lib/integrity.ts`). Not tenant-scoped directly, same pattern
-      as `ExamAnswer` — ownership verified via the parent attempt.
+      `ExamAnswer`): records `WINDOW_BLUR`, `VISIBILITY_HIDDEN`, `FULLSCREEN_EXIT`,
+      and `NETWORK_OFFLINE`/`NETWORK_ONLINE` signals (`src/lib/integrity.ts`).
+      Not tenant-scoped directly, same pattern as `ExamAnswer` — ownership
+      verified via the parent attempt.
+- [x] **Network connectivity is logged, never a strike** — a dropped
+      connection shows up in the faculty review trail labeled "Network
+      connection lost/restored" with a "Context only — not a strike" tag, but
+      `STRIKE_EVENT_TYPES` (exported from `integrity.ts`, the one place this
+      is defined) excludes it from both the visible warning counter and the
+      auto-pause threshold. A bad wifi connection can never fail a student.
+- [x] **Alt+Tab made explicit in the review UI** — `WINDOW_BLUR` displays as
+      "Alt+Tab or window switch detected" rather than generic phrasing.
 - [x] **Fullscreen enforcement** (browser Fullscreen API) — soft, folded into
       `ExamEntryGate`'s device-check step; exiting fullscreen during the exam
       counts as a warning via `IntegrityMonitor`.
@@ -143,19 +162,33 @@ this: `AttemptStatus.INTERRUPTED` and `ExamVersion.securityPolicy Json?`.
       copy/paste is deliberately NOT wired to a strike, so pasting into the
       Notepad tool never costs a warning.
 
-  **Verified:** `npm run build`, `npx eslint .`, `npm test` (90/90 — added
+  **Verified:** `npm run build`, `npx eslint .`, `npm test` (94/94 — added
   `integrity.test.ts`: warning counting, auto-pause at exactly 3, the faculty
   review queue, reinstate, terminate, a stray post-termination event being a
-  no-op, and the student-can-never-view-review permission check), `npm run
-  test:e2e` (4/4, updated for the new gate sequence's ~7s of scripted delay).
-  **Full live click-through**: published a fresh exam, booked it as the
-  student, watched the mock device/ID/room-scan/proctor sequence, dispatched
-  three blur events and watched the warning banner increment 1→2→3 and the
-  exam auto-pause on the third, switched to faculty, saw the attempt in
-  "Pending integrity review," opened the event trail, confirmed a violation,
-  and verified both the grading list (now shows "Terminated," not silently
-  dropped) and the student's result page (clear termination banner, no bare
-  score) reflect it correctly.
+  no-op, network events logged but never counted, and the
+  student-can-never-view-review permission check; added booking-flow tests
+  to `attempts.test.ts`: book is idempotent, begin refuses an unbooked
+  attempt, begin starts the timer and resuming doesn't reset it, finished
+  attempts refuse both), `npm run test:e2e` (4/4, updated for the new
+  booking → receipt → rules → gate sequence). **Full live click-through**,
+  redone against the new booking flow: created an exam with a booking
+  window as faculty, booked it as the student and confirmed the window
+  showed correctly on both the booking screen and the receipt, continued
+  through Exam Rules into the gate sequence and confirmed the timer only
+  started once the exam actually began (not at booking), dispatched a
+  blur/offline/blur/online/blur sequence and confirmed the visible counter
+  only ever reflected the 3 real strikes (never bumped by the 2 network
+  events), auto-paused correctly, and confirmed the faculty review trail
+  showed all 5 events with "Alt+Tab or window switch detected" /
+  "Network connection lost" / "Network connection restored" labels, the
+  network ones tagged "Context only — not a strike."
+
+  **A real bug found in that pass**: the grading-list summary chip showed
+  "5 warning(s)" (the total event count) instead of the strike count,
+  contradicting the review page's own "context only" distinction one click
+  away. Fixed by exporting `STRIKE_EVENT_TYPES` from `integrity.ts` and
+  having both the list chip and the review page read from the same
+  definition instead of each risking their own copy.
 
   **Real bug found and fixed during that live pass** (not caught by
   build/lint/tests): the device-check step's `requestFullscreen()` call hung

@@ -58,3 +58,15 @@ export async function setUserActive(institutionId: string, actor: { role: Role }
   const db = forTenant(institutionId);
   return db.user.update({ where: { id: userId }, data: { isActive } });
 }
+
+/**
+ * Admin-initiated reset, not a self-service email flow — there's no
+ * password-reset-by-email path yet (see DEPLOYMENT.md). This replaces the
+ * previous stopgap of editing passwordHash directly via a script.
+ */
+export async function resetUserPassword(institutionId: string, actor: { role: Role }, userId: string, newPassword: string) {
+  assertCan(actor.role, "user", "update");
+  const passwordHash = await hashPassword(newPassword);
+  const db = forTenant(institutionId);
+  await db.user.update({ where: { id: userId }, data: { passwordHash } });
+}

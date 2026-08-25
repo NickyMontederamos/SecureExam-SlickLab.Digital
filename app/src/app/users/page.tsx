@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
-import { createUser, EmailTakenError, listUsers } from "@/lib/users";
+import { createUser, EmailTakenError, listUsers, resetUserPassword, setUserActive } from "@/lib/users";
 
 const ASSIGNABLE_ROLES: Role[] = ["INSTITUTION_ADMIN", "FACULTY", "PROCTOR", "STUDENT"];
 
@@ -48,6 +48,32 @@ export default async function UsersPage({
     revalidatePath("/users");
   }
 
+  async function toggleActiveAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+    const userId = String(formData.get("userId") ?? "");
+    const nextActive = formData.get("nextActive") === "true";
+    if (!userId) return;
+    await setUserActive(authSession.user.institutionId, authSession.user, userId, nextActive);
+    revalidatePath("/users");
+  }
+
+  async function resetPasswordAction(formData: FormData) {
+    "use server";
+    const authSession = await auth();
+    if (!authSession?.user?.institutionId) {
+      redirect("/login");
+    }
+    const userId = String(formData.get("userId") ?? "");
+    const newPassword = String(formData.get("newPassword") ?? "");
+    if (!userId || newPassword.length < 8) return;
+    await resetUserPassword(authSession.user.institutionId, authSession.user, userId, newPassword);
+    revalidatePath("/users");
+  }
+
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
       <div>
@@ -59,16 +85,40 @@ export default async function UsersPage({
 
       <section className="flex flex-col gap-2">
         {users.map((user) => (
-          <div key={user.id} className="flex items-center justify-between rounded border p-3 text-sm">
-            <span>
-              {user.name} <span className="text-gray-500">({user.email})</span>
-            </span>
-            <span className="flex items-center gap-2">
-              <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{user.role}</span>
-              {!user.isActive && (
-                <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">inactive</span>
-              )}
-            </span>
+          <div key={user.id} className="rounded border p-3 text-sm">
+            <div className="flex items-center justify-between">
+              <span>
+                {user.name} <span className="text-gray-500">({user.email})</span>
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-700">{user.role}</span>
+                {!user.isActive && (
+                  <span className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-700">inactive</span>
+                )}
+              </span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-3">
+              <form action={toggleActiveAction}>
+                <input type="hidden" name="userId" value={user.id} />
+                <input type="hidden" name="nextActive" value={(!user.isActive).toString()} />
+                <button type="submit" className="text-xs underline">
+                  {user.isActive ? "Deactivate" : "Activate"}
+                </button>
+              </form>
+              <form action={resetPasswordAction} className="flex items-center gap-1">
+                <input type="hidden" name="userId" value={user.id} />
+                <input
+                  name="newPassword"
+                  type="password"
+                  placeholder="New password"
+                  minLength={8}
+                  className="rounded border px-2 py-1 text-xs"
+                />
+                <button type="submit" className="text-xs underline">
+                  Reset password
+                </button>
+              </form>
+            </div>
           </div>
         ))}
       </section>

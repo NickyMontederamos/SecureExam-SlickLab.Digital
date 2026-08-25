@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ForbiddenError } from "../rbac";
 import { forPlatform } from "../tenant-db";
-import { createUser, EmailTakenError, listUsers, setUserActive } from "../users";
+import { createUser, EmailTakenError, listUsers, resetUserPassword, setUserActive } from "../users";
+import { verifyPassword } from "../password";
 
 describe("user management (INSTITUTION_ADMIN)", () => {
   const runId = Math.random().toString(36).slice(2, 10);
@@ -81,5 +82,16 @@ describe("user management (INSTITUTION_ADMIN)", () => {
     const target = users.find((u) => u.email === `faculty-${runId}@test.local`)!;
     const updated = await setUserActive(institutionA.id, { role: "INSTITUTION_ADMIN" }, target.id, false);
     expect(updated.isActive).toBe(false);
+  });
+
+  it("resets a user's password", async () => {
+    const users = await listUsers(institutionA.id, { role: "INSTITUTION_ADMIN" });
+    const target = users.find((u) => u.email === `faculty-${runId}@test.local`)!;
+
+    await resetUserPassword(institutionA.id, { role: "INSTITUTION_ADMIN" }, target.id, "BrandNewPass!2");
+
+    const refreshed = await forPlatform().user.findUnique({ where: { id: target.id } });
+    expect(await verifyPassword("BrandNewPass!2", refreshed!.passwordHash)).toBe(true);
+    expect(await verifyPassword("SomeStrongPass!1", refreshed!.passwordHash)).toBe(false);
   });
 });

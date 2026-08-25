@@ -18,3 +18,22 @@ Not covered by an automated test — this is App Router request/cookie plumbing 
 
 ### Status
 RESOLVED
+
+---
+
+## ERROR-002
+
+### Symptom
+After adding grading fields to the Prisma schema (`pointsAwarded`, `autoGraded`, `gradedAt`, `gradedById` on `ExamAnswer`) and running `npx prisma migrate dev`, submitting an exam attempt in the browser threw `PrismaClientValidationError: Unknown argument 'pointsAwarded'` — even though the migration had applied successfully and a fresh `npm test` run (new process) passed all 37 tests using the same fields.
+
+### Root Cause
+`npx prisma migrate dev` applies the SQL migration but does not reliably regenerate `@prisma/client` for an *already-running* Node process — the long-lived `next dev` server process had the pre-migration client loaded in memory from before the schema change, so its `PrismaClient` type/runtime had no idea the new columns existed. Short-lived processes (a fresh `npm test` invocation, a fresh `next build`) picked up the regenerated client fine because they start clean; the dev server did not, because Node doesn't reload `node_modules` into a running process. This is the second time this exact class of staleness has bitten this project (the first was ERROR-earlier institution-branding migration, fixed the same way but not logged).
+
+### Fix
+No code fix — this is a workflow discipline issue. After every `prisma migrate dev`: (1) run `npx prisma generate` explicitly (don't assume migrate did it), and (2) restart any already-running `next dev` process before testing in the browser. Restarting via `Get-NetTCPConnection -LocalPort <port> | Select-Object OwningProcess` + `Stop-Process` (PowerShell) since this environment doesn't have `taskkill` on PATH.
+
+### Regression Test
+Not applicable (workflow, not code). Documented here so it isn't re-discovered a third time.
+
+### Status
+RESOLVED (as a process discipline, not a code change) — see `docs/ARCHITECTURE.md`'s local development section.

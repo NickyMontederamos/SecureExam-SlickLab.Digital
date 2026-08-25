@@ -45,6 +45,8 @@ npm run build                 # production build + typecheck
 
 Seeded demo accounts (local only — see `prisma/seed.ts`): `admin@cmlaw.demo`, `faculty@cmlaw.demo`, `student@cmlaw.demo`, all with password `DemoPass!2026`.
 
+**After any schema change:** run `npx prisma generate` explicitly (don't assume `migrate dev` did it) and restart `next dev` if it's already running — see ERROR-002 in `ERROR_LOG.md`. A running dev server keeps the pre-migration Prisma client in memory and will throw `Unknown argument` errors on the new fields until restarted.
+
 ## What's verified vs. what's UNVALIDATED right now
 
 Verified with a passing automated test or a manual browser check against the real local stack:
@@ -53,14 +55,15 @@ Verified with a passing automated test or a manual browser check against the rea
 - RBAC permission matrix (8 unit tests).
 - Question bank: atomic question+version creation, listing, tenant-isolation on courseId, RBAC enforcement (4 integration tests, plus a full live browser run as faculty).
 - Exam builder: create (DRAFT + immutable v1) → add questions from the bank → publish, with publish-time freezing, empty-exam refusal, and cross-tenant refusal (6 integration tests, plus a full live browser run: create, add question, publish, confirmed in Postgres, confirmed the edit UI locks after publish).
-- Login (correct and incorrect password), session carrying role + institutionId + **id** (see ERROR-001 in `ERROR_LOG.md` — this was missing until caught by live testing), tenant-scoped course listing rendering correctly, institution branding rendering, audit log rows written for both outcomes — all checked live in a browser against the real dev server and database.
+- Student exam-taking + grading: start (enrollment check, no-retake, published-only), answer-key stripped from every student view, ownership checks (a student cannot read/save/submit another student's attempt), auto-save, server-authorized timer expiry, auto-grading of objective questions, manual grading of essay/short-answer, attempt status transitions SUBMITTED → GRADED correctly, grade clamping (8 integration tests, plus two full live walkthroughs: an MC-only exam auto-grading straight through, and an essay exam requiring manual grading via the faculty UI, with the student's result page confirmed to update after).
+- Login (correct and incorrect password), session carrying role + institutionId + **id** (see ERROR-001 in `ERROR_LOG.md` — this was missing until caught by live testing), role-appropriate dashboard course listing, institution branding rendering, audit log rows written for both outcomes — all checked live in a browser against the real dev server and database.
 - Production build + typecheck + lint all pass.
 
 UNVALIDATED (not yet built, so not yet tested):
 - Institution/user CRUD UI and API (onboarding a new institution is script-only right now).
-- Exam scheduling/availability windows, question/answer randomization, re-versioning a published exam.
-- The entire student side: exam attempts, answering, timer, submission.
-- Grading, results, analytics.
+- Exam scheduling/availability windows, question/answer randomization, re-versioning a published exam, retakes.
+- Analytics (score distributions, question difficulty).
+- Rate limiting, security headers, and any adversarial/attack-simulation testing (master prompt §35 Round 5) — everything above is functionally tested, not security-tested.
 - Everything in Phase 2 (offline client, lockdown, encrypted packages, crash recovery).
 
 ## Lesson from ERROR-001

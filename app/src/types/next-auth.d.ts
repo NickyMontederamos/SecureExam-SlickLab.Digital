@@ -10,10 +10,14 @@ declare module "next-auth" {
   }
 
   interface Session {
+    // id is required here (not the optional string it is on DefaultSession["user"]) —
+    // our session() callback always sets it from token.sub for every authenticated
+    // session, so every route that checks session?.user can rely on .id being present.
     user: {
+      id: string;
       role: Role;
       institutionId: string | null;
-    } & DefaultSession["user"];
+    } & Omit<NonNullable<DefaultSession["user"]>, "id">;
   }
 }
 

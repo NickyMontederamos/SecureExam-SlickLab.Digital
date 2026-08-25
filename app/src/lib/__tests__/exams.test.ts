@@ -9,6 +9,7 @@ import {
   ExamNotEditableError,
   ExamNotFoundError,
   getExam,
+  listExamsForCourse,
   publishExam,
 } from "../exams";
 
@@ -106,6 +107,12 @@ describe("exam builder (createExam / addExamQuestion / publishExam)", () => {
 
     const fetched = await getExam(institutionA.id, { role: "FACULTY" }, exam.id);
     expect(fetched.versions[0].examQuestions).toHaveLength(1);
+
+    const facultyView = await listExamsForCourse(institutionA.id, { role: "FACULTY" }, courseA.id);
+    const studentView = await listExamsForCourse(institutionA.id, { role: "STUDENT" }, courseA.id);
+    expect(facultyView.some((e) => e.id === exam.id)).toBe(true);
+    expect(studentView.every((e) => e.status === "PUBLISHED")).toBe(true);
+    expect(studentView.some((e) => e.id === exam.id)).toBe(true); // this one is published, so students see it
   });
 
   it("refuses to add a question to an exam once it's published", async () => {

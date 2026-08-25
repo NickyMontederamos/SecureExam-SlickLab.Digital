@@ -90,6 +90,7 @@ model User {
   questionsCreated    Question[]        @relation("QuestionCreatedBy")
   examsCreated        Exam[]            @relation("ExamCreatedBy")
   examAttempts        ExamAttempt[]
+  answersGraded       ExamAnswer[]      @relation("AnswerGradedBy")
   auditLogs           AuditLog[]
   deviceRegistrations DeviceRegistration[]
 
@@ -253,6 +254,7 @@ model ExamAttempt {
   status              AttemptStatus @default(NOT_STARTED)
   startedAt           DateTime?
   submittedAt         DateTime?
+  gradedAt            DateTime?
   deviceId            String?
   timeRemainingSeconds Int?
   createdAt           DateTime      @default(now())
@@ -273,6 +275,16 @@ model ExamAnswer {
   responseJson   Json?
   isFlagged      Boolean      @default(false)
   savedAt        DateTime     @updatedAt
+
+  /// Auto-graded on submission for objective types (MC/MR/TF); left null
+  /// for essay/short-answer until a faculty member grades it manually
+  /// (master prompt §21). autoGraded distinguishes the two for the UI/audit
+  /// trail even after a manual override.
+  pointsAwarded Float?
+  autoGraded    Boolean   @default(false)
+  gradedAt      DateTime?
+  gradedById    String?
+  gradedBy      User?     @relation("AnswerGradedBy", fields: [gradedById], references: [id])
 
   @@unique([attemptId, examQuestionId])
 }

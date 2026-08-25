@@ -2,20 +2,20 @@ import Image from "next/image";
 import { redirect } from "next/navigation";
 import { auth, signOut } from "@/auth";
 import { getDemoInstitutionBranding } from "@/lib/branding";
-import { forTenant } from "@/lib/tenant-db";
+import { listCoursesForUser } from "@/lib/courses";
 
 export default async function DashboardPage() {
   const session = await auth();
-  if (!session?.user) {
+  if (!session?.user?.id || !session.user.institutionId) {
     redirect("/login");
   }
 
   const [courses, branding] = await Promise.all([
-    session.user.institutionId
-      ? forTenant(session.user.institutionId).course.findMany({ orderBy: { code: "asc" } })
-      : Promise.resolve([]),
+    listCoursesForUser(session.user.institutionId, session.user),
     getDemoInstitutionBranding(),
   ]);
+
+  const courseLinkPath = session.user.role === "STUDENT" ? "exams" : "questions";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
@@ -49,11 +49,13 @@ export default async function DashboardPage() {
       </div>
 
       <section>
-        <h2 className="mb-2 font-medium">Courses (tenant-scoped)</h2>
+        <h2 className="mb-2 font-medium">
+          {session.user.role === "STUDENT" ? "My Courses" : session.user.role === "FACULTY" ? "Courses I Teach" : "Courses"}
+        </h2>
         <ul className="flex flex-col gap-1">
           {courses.map((course) => (
             <li key={course.id} className="rounded border px-3 py-2 text-sm">
-              <a href={`/courses/${course.id}/questions`} className="hover:underline">
+              <a href={`/courses/${course.id}/${courseLinkPath}`} className="hover:underline">
                 {course.code} — {course.name} ({course.academicYear})
               </a>
             </li>

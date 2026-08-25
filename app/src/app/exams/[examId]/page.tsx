@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
 import { addExamQuestion, ExamNotFoundError, getExam, publishExam } from "@/lib/exams";
 import { listQuestionsForCourse } from "@/lib/questions";
+import { findAttemptForStudent, startAttempt } from "@/lib/attempts";
 
 export default async function ExamBuilderPage({
   params,
@@ -30,6 +31,55 @@ export default async function ExamBuilderPage({
 
   const version = exam.versions[0];
   const isDraft = exam.status === "DRAFT";
+
+  if (session.user.role === "STUDENT") {
+    const myAttempt = version ? await findAttemptForStudent(institutionId, session.user, version.id) : null;
+
+    async function startAttemptAction() {
+      "use server";
+      const authSession = await auth();
+      if (!authSession?.user?.institutionId) {
+        redirect("/login");
+      }
+      const attempt = await startAttempt(authSession.user.institutionId, authSession.user, examId);
+      redirect(`/attempts/${attempt.id}`);
+    }
+
+    return (
+      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
+        <div>
+          <a href={`/courses/${exam.courseId}/exams`} className="text-sm text-gray-500">
+            ← Exams
+          </a>
+          <h1 className="text-xl font-semibold">{exam.title}</h1>
+          {version && (
+            <p className="text-sm text-gray-500">
+              {version.timeLimitMinutes} minutes · {version.examQuestions.length} question(s)
+            </p>
+          )}
+        </div>
+
+        {!myAttempt && (
+          <form action={startAttemptAction}>
+            <button type="submit" className="rounded bg-black px-3 py-2 text-white">
+              Start Exam
+            </button>
+          </form>
+        )}
+        {myAttempt?.status === "IN_PROGRESS" && (
+          <a href={`/attempts/${myAttempt.id}`} className="rounded bg-black px-3 py-2 text-center text-white">
+            Continue Exam
+          </a>
+        )}
+        {(myAttempt?.status === "SUBMITTED" || myAttempt?.status === "GRADED") && (
+          <a href={`/attempts/${myAttempt.id}/result`} className="rounded border px-3 py-2 text-center">
+            View Result
+          </a>
+        )}
+      </main>
+    );
+  }
+
   const canEdit = can(session.user.role, "exam", "update") && isDraft;
   const canPublish = can(session.user.role, "exam", "publish") && isDraft;
 
@@ -82,6 +132,11 @@ export default async function ExamBuilderPage({
           </span>
         </div>
         {version && <p className="text-sm text-gray-500">{version.timeLimitMinutes} minutes</p>}
+        {can(session.user.role, "grade", "read") && exam.status === "PUBLISHED" && (
+          <a href={`/exams/${examId}/grading`} className="text-sm underline">
+            Grading
+          </a>
+        )}
       </div>
 
       <section className="flex flex-col gap-2">

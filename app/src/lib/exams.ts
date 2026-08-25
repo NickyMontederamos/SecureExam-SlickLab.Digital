@@ -89,12 +89,13 @@ export async function createExam(institutionId: string, actor: { id: string; rol
   });
 }
 
+/** Students only ever see PUBLISHED exams — draft exams are invisible to them, not merely uneditable. */
 export async function listExamsForCourse(institutionId: string, actor: { role: Role }, courseId: string) {
   assertCan(actor.role, "exam", "read");
 
   const db = forTenant(institutionId);
   return db.exam.findMany({
-    where: { courseId },
+    where: { courseId, status: actor.role === "STUDENT" ? "PUBLISHED" : undefined },
     include: {
       versions: { where: { isActive: true }, include: { examQuestions: true } },
     },

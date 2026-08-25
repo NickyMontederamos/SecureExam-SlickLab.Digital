@@ -1,0 +1,6 @@
+type,prompt,choice1,choice2,choice3,choice4,choice5,choice6,correct_choices,points,difficulty,tags
+MULTIPLE_CHOICE,"What is the capital of the Philippines?",Manila,Cebu,Davao,,,,1,1,easy,geography
+MULTIPLE_RESPONSE,"Which of the following are prime numbers?",2,3,4,5,,,"1,2,4",2,medium,math
+TRUE_FALSE,"The Philippines is an archipelago.",True,False,,,,,1,1,easy,geography
+SHORT_ANSWER,"Define grave abuse of discretion.",,,,,,,,5,hard,constitutional-law
+ESSAY,"Discuss the doctrine of forum shopping and its consequences.",,,,,,,,10,hard,civil-procedure

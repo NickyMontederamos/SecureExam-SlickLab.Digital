@@ -95,11 +95,17 @@ Cheapest, highest-visibility pass. Builds on infrastructure that already exists
 
   **Verified:** `npm run build`, `npx eslint .`, `npm test` (86/86, incl. a new
   flag-without-answer test), `npm run test:e2e` (4/4, updated to check the new
-  rules checkbox). Live browser click-through was blocked this round by a stuck
-  sign-in popup in the verification tool itself (not app-related) — the
-  countdown ticking and calculator/notepad widgets haven't been eyeballed live
-  yet, though both are small, low-risk, pure-client additions covered by the
-  build/lint pass. Worth a quick manual look next session.
+  rules checkbox), **plus a full live click-through**: created and published a
+  fresh exam as faculty, then as a student booked it through the Exam Rules
+  screen, watched the countdown tick down and turn red under a minute, flagged
+  the essay question and confirmed the "Flagged" badge persisted through a
+  Save Progress round-trip, exercised the Calculator and Notepad widgets, and
+  let the exam auto-submit at zero — landed on the result page with the
+  objective question auto-graded (1/1) and the essay correctly left pending.
+  One dev-only cosmetic note: Next.js's local dev-mode indicator badge
+  overlaps the toolbar's bottom-left corner in `next dev` — doesn't appear in
+  a production build, not worth changing for the pitch, but noted here in
+  case it's confusing during future local demos.
 
 ## Milestone 2 — The exam actively protects itself
 

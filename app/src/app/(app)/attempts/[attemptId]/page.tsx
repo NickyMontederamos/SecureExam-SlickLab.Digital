@@ -9,6 +9,7 @@ import { IntegrityMonitor } from "@/components/IntegrityMonitor";
 import {
   AttemptNotFoundError,
   AttemptOwnershipError,
+  attemptDeadline,
   getAttemptForTaking,
   saveAnswers,
   submitAttempt,
@@ -126,20 +127,22 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
     redirect(`/attempts/${attemptId}/result`);
   }
 
-  // Server-authorized timer (master prompt §18): computed fresh on every
-  // load from startedAt, never trusted from the client. No live ticking
-  // countdown or background auto-submit job yet (documented limitation) —
-  // enforcement happens on next page load or save/submit action.
-  const timeLimitSeconds = attempt.examVersion.timeLimitMinutes * 60;
+  // Server-authoritative timer: read from the attempt's stored deadline
+  // (attemptDeadline, which also accounts for time spent paused under
+  // integrity review), never trusted from the client. This render-time
+  // check is a convenience that redirects an expired attempt promptly —
+  // it is NOT the enforcement boundary. saveAnswers() enforces the same
+  // deadline server-side, so skipping this page entirely (direct server
+  // action call, stale tab, disabled JS) cannot buy extra time.
   // This is a Server Component computing a server-authoritative timestamp once per
   // request (not a client render the purity rule is meant to protect) — Date.now() here IS the point.
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
-  const elapsedSeconds = attempt.startedAt ? Math.floor((now - attempt.startedAt.getTime()) / 1000) : 0;
-  const remainingSeconds = Math.max(0, timeLimitSeconds - elapsedSeconds);
-  const deadlineEpochMs = now + remainingSeconds * 1000;
+  const deadline = attemptDeadline(attempt, attempt.examVersion.timeLimitMinutes);
+  const remainingSeconds = deadline ? Math.max(0, Math.floor((deadline.getTime() - now) / 1000)) : 0;
+  const deadlineEpochMs = deadline ? deadline.getTime() : now;
 
-  if (remainingSeconds <= 0) {
+  if (deadline && now > deadline.getTime()) {
     await submitAttempt(institutionId, session.user, attemptId);
     redirect(`/attempts/${attemptId}/result?expired=1`);
   }

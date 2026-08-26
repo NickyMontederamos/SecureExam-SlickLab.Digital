@@ -65,7 +65,14 @@ export async function recordAttemptEvent(
   const paused = warningCount >= WARNING_THRESHOLD;
 
   if (paused) {
-    await db.examAttempt.update({ where: { id: attemptId }, data: { status: "INTERRUPTED" } });
+    // pausedAt stops the exam clock for the duration of the faculty review
+    // — see resolveIntegrityReview, which credits the paused time back to
+    // expiresAt on reinstatement. Without this, a student would be charged
+    // exam time for a review that might well clear them.
+    await db.examAttempt.update({
+      where: { id: attemptId },
+      data: { status: "INTERRUPTED", pausedAt: new Date() },
+    });
   }
 
   return { warningCount, paused };
@@ -153,7 +160,19 @@ export async function resolveIntegrityReview(
   }
 
   if (decision === "REINSTATE") {
-    return db.examAttempt.update({ where: { id: attemptId }, data: { status: "IN_PROGRESS" } });
+    // Credit back the time this attempt spent paused, so a review never
+    // eats into the student's exam time — least of all one that clears
+    // them. Guarded on both fields: a legacy attempt paused before these
+    // columns existed simply resumes on its original deadline rather than
+    // crashing or silently gaining unlimited time.
+    const pausedMs = attempt.pausedAt ? Date.now() - attempt.pausedAt.getTime() : 0;
+    const extendedExpiry =
+      attempt.expiresAt && pausedMs > 0 ? new Date(attempt.expiresAt.getTime() + pausedMs) : attempt.expiresAt;
+
+    return db.examAttempt.update({
+      where: { id: attemptId },
+      data: { status: "IN_PROGRESS", pausedAt: null, expiresAt: extendedExpiry },
+    });
   }
 
   return db.examAttempt.update({

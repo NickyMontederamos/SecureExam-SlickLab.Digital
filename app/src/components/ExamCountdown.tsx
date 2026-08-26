@@ -4,10 +4,22 @@ import { useEffect, useRef, useState } from "react";
 
 /**
  * Ticks down to a server-computed deadline and clicks the real submit button
- * when it hits zero. The deadline is an absolute epoch ms, not a duration —
- * a stale client clock can only make this fire early/late by its own drift,
- * never extend a student's time, since submitAttempt re-derives the deadline
- * server-side regardless of what this component displays.
+ * when it hits zero. The deadline is an absolute epoch ms, not a duration,
+ * so a stale client clock can only make this fire early or late by its own
+ * drift rather than by miscounting elapsed time.
+ *
+ * This component is a COURTESY DISPLAY, not a security control. A student
+ * can stop it trivially — close the tab, disable JS, kill the network — and
+ * nothing here would notice. Actual enforcement lives server-side in
+ * `saveAnswers()`, which refuses any answer written after the attempt's
+ * stored `expiresAt` and finalizes the attempt instead.
+ *
+ * That distinction previously did not hold. This docstring used to claim
+ * "submitAttempt re-derives the deadline server-side", which was false: no
+ * write path checked the deadline, and an answer could be saved and awarded
+ * full credit hours after time expired (reproduced against real Postgres —
+ * see finding A-01 in docs/WORLD_CLASS_AUDIT.md). Do not describe this
+ * component as an enforcement mechanism again.
  */
 export function ExamCountdown({
   deadlineEpochMs,

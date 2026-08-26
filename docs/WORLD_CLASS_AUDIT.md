@@ -69,9 +69,16 @@ Severity: **P0** = blocks any real high-stakes deployment · **P1** = blocks pro
 
 ---
 
-### 🔴 A-01 (P0) — The exam time limit is not enforced on the server
+### ✅ A-01 (P0) — The exam time limit is not enforced on the server — **FIXED 2026-08-26**
 
-**This is the most serious finding in the audit.**
+> **Resolved.** Server-side enforcement added in `saveAnswers()` via a stored
+> `expiresAt` deadline, with paused-review time credited back on
+> reinstatement so the fix doesn't create a fairness regression. Regression
+> suite: `src/lib/__tests__/attempt-expiry.test.ts` (9 tests). Full
+> write-up in `docs/ERROR_LOG.md` ERROR-009. The original finding is
+> preserved below as the record of what was wrong and how it was proven.
+
+**This was the most serious finding in the audit.**
 
 The countdown deadline *is* correctly derived server-side from `startedAt` on page load and is never trusted from the client:
 

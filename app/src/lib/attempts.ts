@@ -58,6 +58,52 @@ export class ProctorApprovalRequiredError extends Error {
 }
 
 /**
+ * A write arrived after the attempt's deadline (docs/WORLD_CLASS_AUDIT.md
+ * finding A-01). Deliberately distinct from AttemptAlreadyFinishedError:
+ * that one means "you already submitted", this means "your time ran out".
+ */
+export class AttemptExpiredError extends Error {
+  constructor(attemptId: string) {
+    super(`Attempt ${attemptId} is past its time limit`);
+    this.name = "AttemptExpiredError";
+  }
+}
+
+/**
+ * The authoritative deadline for an attempt, or null if the timer hasn't
+ * started (NOT_STARTED bookings have no deadline — the clock deliberately
+ * does not run during booking or the entry-gate sequence).
+ *
+ * Prefers the stored `expiresAt`, which is the real source of truth and the
+ * only value that accounts for paused time. Falls back to
+ * `startedAt + timeLimitMinutes` for rows written before that column
+ * existed, so legacy attempts are still enforced rather than silently
+ * exempt — an unenforced legacy row would be exactly the hole this closes.
+ */
+export function attemptDeadline(
+  attempt: { startedAt: Date | null; expiresAt?: Date | null },
+  timeLimitMinutes: number
+): Date | null {
+  if (attempt.expiresAt) {
+    return attempt.expiresAt;
+  }
+  if (!attempt.startedAt) {
+    return null;
+  }
+  return new Date(attempt.startedAt.getTime() + timeLimitMinutes * 60_000);
+}
+
+/** True once `now` is strictly past the attempt's deadline. A not-yet-started attempt is never expired. */
+export function isAttemptExpired(
+  attempt: { startedAt: Date | null; expiresAt?: Date | null },
+  timeLimitMinutes: number,
+  now: Date = new Date()
+): boolean {
+  const deadline = attemptDeadline(attempt, timeLimitMinutes);
+  return deadline !== null && now.getTime() > deadline.getTime();
+}
+
+/**
  * Starts (or resumes) a student's attempt at a published exam. Enforces:
  * exam must be PUBLISHED, student must be enrolled in the exam's course,
  * and a student can only ever have one attempt per exam version (schema's
@@ -100,13 +146,16 @@ export async function startAttempt(institutionId: string, actor: { id: string; r
     return existing;
   }
 
+  // The timer starts here, so the deadline is fixed here too.
+  const startedAt = new Date();
   return db.examAttempt.create({
     // institutionId omitted deliberately — see questions.ts for why.
     data: {
       examVersionId: version.id,
       studentId: actor.id,
       status: "IN_PROGRESS",
-      startedAt: new Date(),
+      startedAt,
+      expiresAt: new Date(startedAt.getTime() + version.timeLimitMinutes * 60_000),
       timeRemainingSeconds: version.timeLimitMinutes * 60,
     } as never,
   });
@@ -205,7 +254,10 @@ export async function beginBookedAttempt(institutionId: string, actor: { id: str
 
   const db = forTenant(institutionId);
 
-  const attempt = await db.examAttempt.findFirst({ where: { id: attemptId } });
+  const attempt = await db.examAttempt.findFirst({
+    where: { id: attemptId },
+    include: { examVersion: { select: { timeLimitMinutes: true } } },
+  });
   if (!attempt) {
     throw new AttemptNotFoundError(attemptId);
   }
@@ -216,7 +268,18 @@ export async function beginBookedAttempt(institutionId: string, actor: { id: str
     if (!attempt.proctorApprovedAt) {
       throw new ProctorApprovalRequiredError(attemptId);
     }
-    return db.examAttempt.update({ where: { id: attemptId }, data: { status: "IN_PROGRESS", startedAt: new Date() } });
+    // This is where the clock genuinely starts for a booked attempt — the
+    // booking and the entry-gate sequence before it deliberately burn no
+    // exam time — so this is where the deadline is fixed.
+    const startedAt = new Date();
+    return db.examAttempt.update({
+      where: { id: attemptId },
+      data: {
+        status: "IN_PROGRESS",
+        startedAt,
+        expiresAt: new Date(startedAt.getTime() + attempt.examVersion.timeLimitMinutes * 60_000),
+      },
+    });
   }
   if (attempt.status === "IN_PROGRESS") {
     return attempt;
@@ -279,7 +342,16 @@ export interface AnswerInput {
   isFlagged?: boolean;
 }
 
-/** Auto-save (master prompt §15): upserts every answer in the batch. Refuses if the attempt isn't the caller's own IN_PROGRESS attempt. */
+/**
+ * Auto-save (master prompt §15): upserts every answer in the batch. Refuses
+ * if the attempt isn't the caller's own IN_PROGRESS attempt, or if its time
+ * limit has passed.
+ *
+ * The deadline check is the security-critical half (docs/WORLD_CLASS_AUDIT.md
+ * A-01): the countdown in the browser is a courtesy display that a student
+ * can trivially stop, so this — not ExamCountdown — is what actually
+ * prevents an answer landing after time is up.
+ */
 export async function saveAnswers(
   institutionId: string,
   actor: { id: string; role: Role },
@@ -290,7 +362,10 @@ export async function saveAnswers(
 
   const db = forTenant(institutionId);
 
-  const attempt = await db.examAttempt.findFirst({ where: { id: attemptId } });
+  const attempt = await db.examAttempt.findFirst({
+    where: { id: attemptId },
+    include: { examVersion: { select: { timeLimitMinutes: true } } },
+  });
   if (!attempt) {
     throw new AttemptNotFoundError(attemptId);
   }
@@ -299,6 +374,14 @@ export async function saveAnswers(
   }
   if (attempt.status !== "IN_PROGRESS") {
     throw new AttemptAlreadyFinishedError(attemptId);
+  }
+  if (isAttemptExpired(attempt, attempt.examVersion.timeLimitMinutes)) {
+    // Finalize rather than just refusing: an attempt whose deadline passed
+    // while the student was away (closed laptop, dead connection) must not
+    // sit IN_PROGRESS forever. Their already-saved answers are graded — only
+    // this too-late batch is discarded.
+    await finalizeAttempt(institutionId, attemptId);
+    throw new AttemptExpiredError(attemptId);
   }
 
   const validQuestions = await db.examQuestion.findMany({
@@ -358,10 +441,18 @@ function autoGradePoints(
  * than silently scoring 0), auto-grades objective questions, and marks the
  * attempt GRADED immediately if nothing needs manual grading, or SUBMITTED
  * (pending grading) otherwise.
+ *
+ * Deliberately takes no actor: this runs both for a student's own submit
+ * and for a server-side expiry finalization where there is no request in
+ * flight (see saveAnswers). Callers own the authorization check.
+ *
+ * Idempotent by construction. The status transition is claimed with a
+ * conditional updateMany rather than a read-then-write, so two concurrent
+ * finalizations (double-click, retry, or a submit racing an expiry sweep)
+ * can only produce one submission — the loser sees affected-count 0 and
+ * returns the already-final attempt instead of grading it twice.
  */
-export async function submitAttempt(institutionId: string, actor: { id: string; role: Role }, attemptId: string) {
-  assertCan(actor.role, "exam_attempt", "take");
-
+async function finalizeAttempt(institutionId: string, attemptId: string) {
   const db = forTenant(institutionId);
 
   const attempt = await db.examAttempt.findFirst({
@@ -374,6 +465,88 @@ export async function submitAttempt(institutionId: string, actor: { id: string; 
   if (!attempt) {
     throw new AttemptNotFoundError(attemptId);
   }
+  if (attempt.status !== "IN_PROGRESS") {
+    return attempt;
+  }
+
+  const answersByQuestion = new Map(attempt.answers.map((a) => [a.examQuestionId, a]));
+
+  return db.$transaction(async (tx) => {
+    let allGraded = true;
+    const gradedRows: { examQuestionId: string; responseJson: unknown; pointsAwarded: number | null }[] = [];
+
+    for (const eq of attempt.examVersion.examQuestions) {
+      const existing = answersByQuestion.get(eq.id);
+      const responseJson = existing?.responseJson ?? null;
+      const pointsAwarded = autoGradePoints(eq.question.type, responseJson, eq.questionVersion.correctAnswer, eq.points);
+      if (pointsAwarded === null) {
+        allGraded = false;
+      }
+      gradedRows.push({ examQuestionId: eq.id, responseJson, pointsAwarded });
+    }
+
+    // Claim the transition first. If another caller already finalized this
+    // attempt, count is 0 and we must not write answers or a submission.
+    const claimed = await tx.examAttempt.updateMany({
+      where: { id: attemptId, status: "IN_PROGRESS" },
+      data: {
+        status: allGraded ? "GRADED" : "SUBMITTED",
+        submittedAt: new Date(),
+        gradedAt: allGraded ? new Date() : null,
+      },
+    });
+    if (claimed.count === 0) {
+      const current = await tx.examAttempt.findFirst({ where: { id: attemptId } });
+      return current!;
+    }
+
+    for (const row of gradedRows) {
+      const isAutoGraded = row.pointsAwarded !== null;
+      await tx.examAnswer.upsert({
+        where: { attemptId_examQuestionId: { attemptId, examQuestionId: row.examQuestionId } },
+        create: {
+          attemptId,
+          examQuestionId: row.examQuestionId,
+          responseJson: row.responseJson as never,
+          pointsAwarded: row.pointsAwarded ?? undefined,
+          autoGraded: isAutoGraded,
+          gradedAt: isAutoGraded ? new Date() : undefined,
+        },
+        update: {
+          pointsAwarded: row.pointsAwarded ?? undefined,
+          autoGraded: isAutoGraded,
+          gradedAt: isAutoGraded ? new Date() : undefined,
+        },
+      });
+    }
+
+    await tx.submission.create({ data: { attemptId } });
+
+    const updated = await tx.examAttempt.findFirst({ where: { id: attemptId } });
+    return updated!;
+  });
+}
+
+/**
+ * A student submitting their own attempt. Ownership + status are checked
+ * here; the grading itself is shared with the expiry path via
+ * finalizeAttempt.
+ *
+ * Note the deliberate asymmetry with saveAnswers: submitting fractionally
+ * late is *not* refused, because submitting accepts no new answer data — it
+ * only grades what was already saved before the deadline. Refusing it would
+ * punish network latency on the auto-submit round trip by discarding work
+ * the student legitimately completed in time.
+ */
+export async function submitAttempt(institutionId: string, actor: { id: string; role: Role }, attemptId: string) {
+  assertCan(actor.role, "exam_attempt", "take");
+
+  const db = forTenant(institutionId);
+
+  const attempt = await db.examAttempt.findFirst({ where: { id: attemptId } });
+  if (!attempt) {
+    throw new AttemptNotFoundError(attemptId);
+  }
   if (attempt.studentId !== actor.id) {
     throw new AttemptOwnershipError(attemptId);
   }
@@ -381,51 +554,7 @@ export async function submitAttempt(institutionId: string, actor: { id: string; 
     throw new AttemptAlreadyFinishedError(attemptId);
   }
 
-  const answersByQuestion = new Map(attempt.answers.map((a) => [a.examQuestionId, a]));
-
-  return db.$transaction(async (tx) => {
-    let allGraded = true;
-
-    for (const eq of attempt.examVersion.examQuestions) {
-      const existing = answersByQuestion.get(eq.id);
-      const responseJson = existing?.responseJson ?? null;
-      const pointsAwarded = autoGradePoints(eq.question.type, responseJson, eq.questionVersion.correctAnswer, eq.points);
-      const isAutoGraded = pointsAwarded !== null;
-      if (!isAutoGraded) {
-        allGraded = false;
-      }
-
-      await tx.examAnswer.upsert({
-        where: { attemptId_examQuestionId: { attemptId, examQuestionId: eq.id } },
-        create: {
-          attemptId,
-          examQuestionId: eq.id,
-          responseJson: responseJson as never,
-          pointsAwarded: pointsAwarded ?? undefined,
-          autoGraded: isAutoGraded,
-          gradedAt: isAutoGraded ? new Date() : undefined,
-        },
-        update: {
-          pointsAwarded: pointsAwarded ?? undefined,
-          autoGraded: isAutoGraded,
-          gradedAt: isAutoGraded ? new Date() : undefined,
-        },
-      });
-    }
-
-    const updated = await tx.examAttempt.update({
-      where: { id: attemptId },
-      data: {
-        status: allGraded ? "GRADED" : "SUBMITTED",
-        submittedAt: new Date(),
-        gradedAt: allGraded ? new Date() : null,
-      },
-    });
-
-    await tx.submission.create({ data: { attemptId } });
-
-    return updated;
-  });
+  return finalizeAttempt(institutionId, attemptId);
 }
 
 export interface AttemptResultBreakdownRow {

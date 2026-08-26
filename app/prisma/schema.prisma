@@ -306,6 +306,22 @@ model ExamAttempt {
   /// is the real gate that replaces the mocked delay.
   proctorApprovedAt   DateTime?
   startedAt           DateTime?
+  /// The authoritative deadline for this attempt — the single source of
+  /// truth the server enforces on every write (see attemptDeadline() in
+  /// attempts.ts). Set when the timer actually begins, NOT when the
+  /// attempt row is created, so the booking/entry-gate sequence never
+  /// burns exam time. Stored explicitly rather than derived from
+  /// startedAt + timeLimitMinutes so that pause time (INTERRUPTED, see
+  /// pausedAt) and any future proctor time-extension can move it without
+  /// rewriting startedAt, which must keep meaning "when the exam began".
+  /// Null on legacy rows created before this column existed — callers fall
+  /// back to startedAt + timeLimitMinutes for those.
+  expiresAt           DateTime?
+  /// When the current INTERRUPTED pause began. On reinstatement the paused
+  /// duration is added back to expiresAt, so a student is never charged
+  /// exam time for a faculty review — least of all one that clears them.
+  /// Null whenever the attempt is not currently paused.
+  pausedAt            DateTime?
   submittedAt         DateTime?
   gradedAt            DateTime?
   deviceId            String?

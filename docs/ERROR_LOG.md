@@ -151,3 +151,64 @@ This *is* the regression test — `tests/e2e/exam-lifecycle.spec.ts` now passes 
 
 ### Status
 RESOLVED
+
+---
+
+## ERROR-009
+
+### Symptom
+The exam time limit was not enforced by any server write path. A student could save an answer and have it awarded full credit **hours after the deadline had passed**. Found during the world-class readiness audit (`docs/WORLD_CLASS_AUDIT.md` finding A-01), not by a user report or a failing test.
+
+Reproduced against real Postgres before fixing — a 1-minute exam, written 2 hours after start:
+
+```
+saveAnswers accepted:   true
+submitAttempt accepted: true
+final attempt status:   GRADED
+points awarded:         1      <- full credit, 119 minutes late
+```
+
+### Root Cause
+Two separate things, and the second is why it survived so long.
+
+1. **No deadline check on any write path.** `saveAnswers()` and `submitAttempt()` guarded only `status !== "IN_PROGRESS"`. `timeRemainingSeconds` was written once at attempt creation and **never read anywhere in the codebase**. `timeLimitMinutes` never appeared in an enforcement branch. The attempt *page* did check expiry on render — but a page render is not a security boundary: a stale tab, a direct server-action call, or simply not reloading bypasses it entirely.
+
+2. **A docstring that asserted the control existed.** `ExamCountdown.tsx` claimed *"submitAttempt re-derives the deadline server-side regardless of what this component displays."* That was false. Anyone auditing the timer would read that comment and stop looking — which is exactly what appears to have happened. **A confidently wrong comment on a security control is worse than no comment, because it terminates the reviewer's investigation.**
+
+### Fix
+- Added `expiresAt` (authoritative deadline) and `pausedAt` to `ExamAttempt` — additive nullable migration, no data loss.
+- `expiresAt` is set where the clock genuinely starts (`startAttempt`, and `beginBookedAttempt`'s NOT_STARTED→IN_PROGRESS transition), never at row creation — booking and the entry gate still burn no exam time.
+- `attemptDeadline()` / `isAttemptExpired()` in `attempts.ts` are the single source of truth. They fall back to `startedAt + timeLimitMinutes` for pre-migration rows, so legacy attempts are enforced rather than silently exempt.
+- `saveAnswers()` now refuses a post-deadline write with `AttemptExpiredError` **and** finalizes the attempt, so one abandoned mid-exam (closed laptop, dead connection) can't sit `IN_PROGRESS` forever.
+- `submitAttempt()` deliberately does **not** refuse a late submit: submitting accepts no new answer data, it only grades what was saved in time. Refusing it would discard legitimately-completed work over network latency on the auto-submit round trip.
+- **Pause fairness:** naively enforcing `startedAt + limit` would have charged a student for time spent under integrity review — including a review that *clears* them. `recordAttemptEvent` now stamps `pausedAt` on the 3-strike pause, and `resolveIntegrityReview`'s REINSTATE credits that duration back onto `expiresAt`.
+- Corrected the `ExamCountdown` docstring to state plainly that it is a courtesy display, not an enforcement mechanism.
+
+Also fixed in passing: `finalizeAttempt()` now claims the status transition with a conditional `updateMany` instead of read-then-write, so two concurrent submissions produce exactly one `Submission` row (partially addresses audit finding A-03).
+
+### Regression Test
+`src/lib/__tests__/attempt-expiry.test.ts` — 9 tests. The headline case is the exact scenario reproduced above: a late `saveAnswers` must throw `AttemptExpiredError`, the answer must not land, and the attempt must not be left `IN_PROGRESS`. Also covers the `expiresAt`-over-derived precedence, the legacy-row fallback, the strict boundary (expired *after* the deadline, not on it), paused-time credit on reinstatement, and the concurrent-submit guard.
+
+**General lesson: when a comment claims a security control exists, verify the control, not the comment.** This gap sat inside a fully green suite (139/139 unit, 7/7 E2E) because nothing tested for it — a passing suite only proves the things it actually asserts.
+
+### Status
+RESOLVED
+
+---
+
+## ERROR-010
+
+### Symptom
+Immediately after the ERROR-009 migration, the student exam-taking E2E test failed at the proctor-approval → navigation step, in isolation and with a single worker (so not the parallel-contention flake seen earlier in the same session). Unit tests covering the same function all passed.
+
+### Root Cause
+Not a code defect. The `next dev` server had been running since **before** the migration, so it held a stale in-memory Prisma client with no knowledge of the new columns — `PrismaClientValidationError: Unknown argument 'expiresAt'`. Vitest passed because it spawns fresh processes that load the regenerated client. Playwright's `reuseExistingServer: true` attached to the stale server instead of starting a fresh one.
+
+### Fix
+Restarted the dev server. All 7 E2E tests then passed, including the failing one.
+
+### Regression Test
+None warranted — this is an environment/tooling behaviour, not application logic. **General lesson: after any `prisma migrate`, restart any long-running `next dev` process before trusting an E2E result. `reuseExistingServer: true` will silently reuse a server running against a stale client, and the resulting failure looks exactly like an application bug.**
+
+### Status
+RESOLVED

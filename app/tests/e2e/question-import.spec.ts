@@ -36,6 +36,8 @@ test("faculty imports a valid CSV question bank", async ({ page }) => {
 
   await login(page);
   await page.click("text=LAW101");
+  await expect(page).toHaveURL(/\/courses\/[^/]+$/);
+  await page.click("text=Question bank");
   await expect(page).toHaveURL(/questions/);
 
   await page.setInputFiles('input[name="file"]', csvPath);
@@ -60,6 +62,8 @@ test("an invalid CSV imports nothing and shows the row error", async ({ page }) 
 
   await login(page);
   await page.click("text=LAW101");
+  await expect(page).toHaveURL(/\/courses\/[^/]+$/);
+  await page.click("text=Question bank");
   await expect(page).toHaveURL(/questions/);
 
   await page.setInputFiles('input[name="file"]', csvPath);

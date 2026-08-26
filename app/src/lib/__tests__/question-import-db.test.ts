@@ -59,6 +59,9 @@ describe("importQuestionsFromCsv", () => {
     faculty = await platform.user.create({
       data: { institutionId: institutionA.id, email: `import-faculty-${runId}@test.local`, name: "Faculty", role: "FACULTY", passwordHash: "x" },
     });
+    await platform.courseFaculty.create({
+      data: { institutionId: institutionA.id, courseId: courseA.id, userId: faculty.id },
+    });
   });
 
   afterAll(async () => {
@@ -68,6 +71,7 @@ describe("importQuestionsFromCsv", () => {
     await platform.exam.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: { in: [institutionA.id, institutionB.id] } } });
     await platform.institution.deleteMany({ where: { id: { in: [institutionA.id, institutionB.id] } } });

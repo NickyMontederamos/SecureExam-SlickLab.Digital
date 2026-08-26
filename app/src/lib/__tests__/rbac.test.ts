@@ -37,9 +37,17 @@ describe("rbac permission matrix", () => {
     expect(can("PROCTOR", "grade", "grade")).toBe(false);
   });
 
-  it("only proctors can approve exam attempts", () => {
+  it("only proctors and institution admins can approve exam attempts", () => {
+    expect(can("INSTITUTION_ADMIN", "exam_attempt", "approve")).toBe(true);
     expect(can("FACULTY", "exam_attempt", "approve")).toBe(false);
     expect(can("STUDENT", "exam_attempt", "approve")).toBe(false);
+  });
+
+  it("only institution admins can delete an exam attempt (cancel/reset) — not proctors or faculty", () => {
+    expect(can("INSTITUTION_ADMIN", "exam_attempt", "delete")).toBe(true);
+    expect(can("PROCTOR", "exam_attempt", "delete")).toBe(false);
+    expect(can("FACULTY", "exam_attempt", "delete")).toBe(false);
+    expect(can("STUDENT", "exam_attempt", "delete")).toBe(false);
   });
 
   it("institution admins have every faculty permission (course/exam/grading management) on top of their own", () => {

@@ -1,6 +1,7 @@
 import type { Prisma, QuestionType, Role } from "@prisma/client";
 import { assertCan } from "./rbac";
 import { forTenant } from "./tenant-db";
+import { assertFacultyAssignedToCourse } from "./courses";
 
 export interface CreateQuestionInput {
   courseId: string;
@@ -64,6 +65,7 @@ export async function createQuestion(
   if (!course) {
     throw new CourseNotFoundError(input.courseId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, input.courseId);
 
   return db.$transaction(async (tx) => {
     const question = await tx.question.create({
@@ -107,10 +109,11 @@ export async function createQuestion(
  */
 export async function listQuestionsForCourse(
   institutionId: string,
-  actor: { role: Role },
+  actor: { id: string; role: Role },
   courseId: string
 ) {
   assertCan(actor.role, "question", "read");
+  await assertFacultyAssignedToCourse(institutionId, actor, courseId);
 
   const db = forTenant(institutionId);
   return db.question.findMany({
@@ -135,7 +138,7 @@ export interface UpdateQuestionInput {
 /** Edits a question's latest (and, since it's unused, only) version in place. Refuses once any exam has attached it — see QuestionInUseError. */
 export async function updateQuestion(
   institutionId: string,
-  actor: { role: Role },
+  actor: { id: string; role: Role },
   questionId: string,
   input: UpdateQuestionInput
 ) {
@@ -152,6 +155,9 @@ export async function updateQuestion(
   });
   if (!question) {
     throw new QuestionNotFoundError(questionId);
+  }
+  if (question.courseId) {
+    await assertFacultyAssignedToCourse(institutionId, actor, question.courseId);
   }
   if (question._count.examQuestions > 0) {
     throw new QuestionInUseError(questionId);
@@ -173,7 +179,7 @@ export async function updateQuestion(
 }
 
 /** Deletes a question outright. Refuses once any exam has attached it — see QuestionInUseError. */
-export async function deleteQuestion(institutionId: string, actor: { role: Role }, questionId: string) {
+export async function deleteQuestion(institutionId: string, actor: { id: string; role: Role }, questionId: string) {
   assertCan(actor.role, "question", "delete");
 
   const db = forTenant(institutionId);
@@ -184,6 +190,9 @@ export async function deleteQuestion(institutionId: string, actor: { role: Role 
   });
   if (!question) {
     throw new QuestionNotFoundError(questionId);
+  }
+  if (question.courseId) {
+    await assertFacultyAssignedToCourse(institutionId, actor, question.courseId);
   }
   if (question._count.examQuestions > 0) {
     throw new QuestionInUseError(questionId);

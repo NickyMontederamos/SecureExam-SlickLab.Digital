@@ -4,6 +4,7 @@ import { ExamNotFoundError, getExam } from "@/lib/exams";
 import { listAttemptsForExam } from "@/lib/grading";
 import { listIntegrityReviewsForExam, STRIKE_EVENT_TYPES } from "@/lib/integrity";
 import { ForbiddenError } from "@/lib/rbac";
+import { Alert, Badge, Card, EmptyState, PageHeader, Section } from "@/components/ui";
 
 export default async function ExamGradingPage({ params }: { params: Promise<{ examId: string }> }) {
   const session = await auth();
@@ -31,80 +32,66 @@ export default async function ExamGradingPage({ params }: { params: Promise<{ ex
     throw error;
   }
 
+  const gradedCount = attempts.filter((a) => a.status === "GRADED").length;
+  const pendingAttemptCount = attempts.length - gradedCount;
+
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <a href={`/exams/${examId}`} className="text-sm text-gray-500">
-          ← Exam
-        </a>
-        <h1 className="text-xl font-semibold">{exam.title} — Grading</h1>
-        <p className="text-sm text-gray-500">{attempts.length} submission(s)</p>
-      </div>
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 p-6">
+      <PageHeader backHref={`/exams/${examId}`} backLabel="Exam" title={`${exam.title} — Grading`} subtitle={`${attempts.length} submission(s)`} />
 
       {integrityReviews.length > 0 && (
-        <section className="flex flex-col gap-2 rounded border border-amber-300 bg-amber-50 p-3">
-          <h2 className="font-medium text-amber-900">Pending integrity review ({integrityReviews.length})</h2>
-          {integrityReviews.map((attempt) => {
-            const strikeCount = attempt.events.filter((e) => STRIKE_EVENT_TYPES.includes(e.type)).length;
-            return (
-              <a
-                key={attempt.id}
-                href={`/attempts/${attempt.id}/review`}
-                className="flex items-center justify-between rounded border border-amber-300 bg-white p-3 text-sm hover:bg-amber-50"
-              >
-                <span>{attempt.student.name}</span>
-                <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">
-                  {strikeCount} strike(s) — paused
-                </span>
-              </a>
-            );
-          })}
-        </section>
+        <Section title={`Pending integrity review (${integrityReviews.length})`}>
+          <div className="flex flex-col gap-2">
+            {integrityReviews.map((attempt) => {
+              const strikeCount = attempt.events.filter((e) => STRIKE_EVENT_TYPES.includes(e.type)).length;
+              return (
+                <a key={attempt.id} href={`/attempts/${attempt.id}/review`}>
+                  <Card interactive className="flex items-center justify-between border-amber-300 bg-amber-50 text-sm">
+                    <span className="text-slate-900">{attempt.student.name}</span>
+                    <Badge tone="amber">{strikeCount} strike(s) — paused</Badge>
+                  </Card>
+                </a>
+              );
+            })}
+          </div>
+        </Section>
       )}
 
-      <section className="flex flex-col gap-2">
-        {attempts.length === 0 && <p className="text-sm text-gray-500">No submissions yet.</p>}
-        {attempts.length > 0 && (() => {
-          const gradedCount = attempts.filter((a) => a.status === "GRADED").length;
-          const pendingAttemptCount = attempts.length - gradedCount;
-          return pendingAttemptCount > 0 ? (
-            <p className="text-sm text-amber-700">
-              {pendingAttemptCount} of {attempts.length} submission(s) still need grading.
-            </p>
-          ) : (
-            <p className="text-sm text-green-700">All {attempts.length} submission(s) fully graded.</p>
-          );
-        })()}
-        {attempts.map((attempt) => {
-          const pendingCount = attempt.answers.filter((a) => a.pointsAwarded === null).length;
-          const isTerminated = attempt.status === "TERMINATED";
-          return (
-            <a
-              key={attempt.id}
-              href={isTerminated ? `/attempts/${attempt.id}/review` : `/attempts/${attempt.id}/grade`}
-              className="flex items-center justify-between rounded border p-3 text-sm hover:bg-gray-50"
-            >
-              <span>{attempt.student.name}</span>
-              <span
-                className={
-                  "rounded px-2 py-0.5 text-xs font-medium " +
-                  (isTerminated
-                    ? "bg-red-100 text-red-800"
-                    : attempt.status === "GRADED"
-                      ? "bg-green-100 text-green-800"
-                      : "bg-amber-100 text-amber-800")
-                }
-              >
-                {isTerminated
-                  ? "Terminated"
-                  : attempt.status === "GRADED"
-                    ? "Graded"
-                    : `${pendingCount} of ${attempt.answers.length} question(s) pending`}
-              </span>
-            </a>
-          );
-        })}
-      </section>
+      <Section title="Submissions">
+        {attempts.length === 0 ? (
+          <EmptyState>No submissions yet.</EmptyState>
+        ) : (
+          <>
+            {pendingAttemptCount > 0 ? (
+              <Alert tone="warning">
+                {pendingAttemptCount} of {attempts.length} submission(s) still need grading.
+              </Alert>
+            ) : (
+              <Alert tone="success">All {attempts.length} submission(s) fully graded.</Alert>
+            )}
+            <div className="mt-3 flex flex-col gap-2">
+              {attempts.map((attempt) => {
+                const pendingCount = attempt.answers.filter((a) => a.pointsAwarded === null).length;
+                const isTerminated = attempt.status === "TERMINATED";
+                return (
+                  <a key={attempt.id} href={isTerminated ? `/attempts/${attempt.id}/review` : `/attempts/${attempt.id}/grade`}>
+                    <Card interactive className="flex items-center justify-between text-sm">
+                      <span className="text-slate-900">{attempt.student.name}</span>
+                      <Badge tone={isTerminated ? "red" : attempt.status === "GRADED" ? "green" : "amber"}>
+                        {isTerminated
+                          ? "Terminated"
+                          : attempt.status === "GRADED"
+                            ? "Graded"
+                            : `${pendingCount} of ${attempt.answers.length} question(s) pending`}
+                      </Badge>
+                    </Card>
+                  </a>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </Section>
     </main>
   );
 }

@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { AttemptNotFoundError } from "@/lib/attempts";
 import { getIntegrityReview, resolveIntegrityReview, STRIKE_EVENT_TYPES } from "@/lib/integrity";
 import { ForbiddenError } from "@/lib/rbac";
+import { Alert, Badge, Button, Card, PageHeader, Section } from "@/components/ui";
 
 const EVENT_LABELS: Record<string, string> = {
   WINDOW_BLUR: "Alt+Tab or window switch detected",
@@ -12,7 +13,6 @@ const EVENT_LABELS: Record<string, string> = {
   NETWORK_OFFLINE: "Network connection lost",
   NETWORK_ONLINE: "Network connection restored",
 };
-
 
 export default async function IntegrityReviewPage({ params }: { params: Promise<{ attemptId: string }> }) {
   const session = await auth();
@@ -59,58 +59,51 @@ export default async function IntegrityReviewPage({ params }: { params: Promise<
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <a href={`/exams/${attempt.examVersion.exam.id}/grading`} className="text-sm text-gray-500">
-          ← Grading
-        </a>
-        <h1 className="text-xl font-semibold">Integrity Review — {attempt.student.name}</h1>
-        <p className="text-sm text-gray-500">
-          {attempt.examVersion.exam.title} · Status: {attempt.status}
-        </p>
-      </div>
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
+      <PageHeader
+        backHref={`/exams/${attempt.examVersion.exam.id}/grading`}
+        backLabel="Grading"
+        title={`Integrity Review — ${attempt.student.name}`}
+        subtitle={`${attempt.examVersion.exam.title} · Status: ${attempt.status}`}
+      />
 
-      <section className="rounded border p-4">
-        <h2 className="mb-3 font-medium">Event trail ({attempt.events.length})</h2>
-        <p className="mb-3 text-xs text-gray-500">
-          Technical signals only — this is evidence for a human decision, not an automatic verdict. A student losing
-          focus because of an OS notification isn&apos;t automatically misconduct.
-        </p>
+      <Section
+        title={`Event trail (${attempt.events.length})`}
+        description="Technical signals only — this is evidence for a human decision, not an automatic verdict. A student losing focus because of an OS notification isn't automatically misconduct."
+      >
         <ul className="flex flex-col gap-2">
           {attempt.events.map((event) => {
             const isStrike = STRIKE_EVENT_TYPES.includes(event.type);
             return (
-              <li key={event.id} className="flex items-center justify-between rounded border px-3 py-2 text-sm">
-                <span className="flex items-center gap-2">
-                  {EVENT_LABELS[event.type] ?? event.type}
-                  {!isStrike && (
-                    <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">Context only — not a strike</span>
-                  )}
-                </span>
-                <span className="text-xs text-gray-500">{event.occurredAt.toLocaleString()}</span>
+              <li key={event.id}>
+                <Card className="flex items-center justify-between text-sm">
+                  <span className="flex items-center gap-2">
+                    {EVENT_LABELS[event.type] ?? event.type}
+                    {!isStrike && <Badge tone="blue">Context only — not a strike</Badge>}
+                  </span>
+                  <span className="text-xs text-slate-500">{event.occurredAt.toLocaleString()}</span>
+                </Card>
               </li>
             );
           })}
         </ul>
-      </section>
+      </Section>
 
       {canDecide ? (
-        <section className="flex gap-3">
+        <div className="flex gap-3">
           <form action={reinstateAction}>
-            <button type="submit" className="rounded border px-3 py-2 text-sm">
+            <Button type="submit" variant="secondary">
               Reinstate — let the student continue
-            </button>
+            </Button>
           </form>
           <form action={failAction}>
-            <button type="submit" className="rounded bg-red-700 px-3 py-2 text-sm text-white">
+            <Button type="submit" variant="danger">
               Confirm violation — terminate attempt
-            </button>
+            </Button>
           </form>
-        </section>
+        </div>
       ) : (
-        <p className="text-sm text-gray-500">
-          This attempt is no longer pending review (current status: {attempt.status}).
-        </p>
+        <Alert tone="info">This attempt is no longer pending review (current status: {attempt.status}).</Alert>
       )}
     </main>
   );

@@ -32,6 +32,7 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
     faculty = await platform.user.create({
       data: { institutionId: institutionA.id, email: `integrity-faculty-${runId}@test.local`, name: "Faculty", role: "FACULTY", passwordHash: "x" },
     });
+    await platform.courseFaculty.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: faculty.id } });
     student = await platform.user.create({
       data: { institutionId: institutionA.id, email: `integrity-student-${runId}@test.local`, name: "Student", role: "STUDENT", passwordHash: "x" },
     });
@@ -56,9 +57,9 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
       correctAnswer: { choiceIds: ["0"] },
       points: 1,
     });
-    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId, questionId: question.id, points: 1 });
+    await addExamQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, { examId, questionId: question.id, points: 1 });
 
-    await publishExam(institutionA.id, { role: "FACULTY" }, examId);
+    await publishExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, examId);
   });
 
   afterAll(async () => {
@@ -73,6 +74,7 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.institution.deleteMany({ where: { id: institutionA.id } });

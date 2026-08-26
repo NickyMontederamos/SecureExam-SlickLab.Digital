@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { createInstitution, EmailTakenError, listInstitutions, SlugTakenError } from "@/lib/institutions";
+import { Alert, Button, Card, EmptyState, PageHeader, Section, inputClassName, labelClassName } from "@/components/ui";
 
 export default async function AdminPage({
   searchParams,
@@ -45,58 +46,60 @@ export default async function AdminPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <h1 className="text-xl font-semibold">Platform Admin</h1>
-      </div>
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 p-6">
+      <PageHeader title="Platform Admin" subtitle="Cross-tenant onboarding — not scoped to any one institution." />
 
-      <section>
-        <h2 className="mb-2 font-medium">Institutions ({institutions.length})</h2>
-        <ul className="flex flex-col gap-1">
-          {institutions.map((institution) => (
-            <li key={institution.id} className="rounded border px-3 py-2 text-sm">
-              {institution.name} <span className="text-gray-500">({institution.slug})</span>
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <section className="rounded border p-4">
-        <h2 className="mb-3 font-medium">Onboard a new institution</h2>
-        <p className="mb-3 text-xs text-gray-500">
-          Creates the institution and its first INSTITUTION_ADMIN account together.
-        </p>
-        {error && (
-          <p role="alert" className="mb-3 rounded bg-red-100 p-2 text-sm text-red-700">
-            {error}
-          </p>
+      <Section title={`Institutions (${institutions.length})`}>
+        {institutions.length === 0 ? (
+          <EmptyState>No institutions onboarded yet.</EmptyState>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {institutions.map((institution) => (
+              <li key={institution.id}>
+                <Card className="text-sm">
+                  <span className="font-medium text-slate-900">{institution.name}</span>{" "}
+                  <span className="text-slate-500">({institution.slug})</span>
+                </Card>
+              </li>
+            ))}
+          </ul>
         )}
-        <form action={createInstitutionAction} className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-sm">
-            Institution name
-            <input name="name" required className="rounded border px-3 py-2" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            Slug (url-safe, unique)
-            <input name="slug" required pattern="[a-z0-9-]+" className="rounded border px-3 py-2" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            First admin&apos;s name
-            <input name="adminName" required className="rounded border px-3 py-2" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            First admin&apos;s email
-            <input name="adminEmail" type="email" required className="rounded border px-3 py-2" />
-          </label>
-          <label className="flex flex-col gap-1 text-sm">
-            First admin&apos;s password
-            <input name="adminPassword" type="password" required minLength={8} className="rounded border px-3 py-2" />
-          </label>
-          <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-            Create institution
-          </button>
-        </form>
-      </section>
+      </Section>
+
+      <Section title="Onboard a new institution" description="Creates the institution and its first INSTITUTION_ADMIN account together.">
+        <Card>
+          {error && (
+            <div className="mb-3">
+              <Alert tone="error">{error}</Alert>
+            </div>
+          )}
+          <form action={createInstitutionAction} className="flex flex-col gap-3">
+            <label className={labelClassName}>
+              Institution name
+              <input name="name" required className={inputClassName} />
+            </label>
+            <label className={labelClassName}>
+              Slug (url-safe, unique)
+              <input name="slug" required pattern="[a-z0-9-]+" className={inputClassName} />
+            </label>
+            <label className={labelClassName}>
+              First admin&apos;s name
+              <input name="adminName" required className={inputClassName} />
+            </label>
+            <label className={labelClassName}>
+              First admin&apos;s email
+              <input name="adminEmail" type="email" required className={inputClassName} />
+            </label>
+            <label className={labelClassName}>
+              First admin&apos;s password
+              <input name="adminPassword" type="password" required minLength={8} className={inputClassName} />
+            </label>
+            <Button type="submit" className="self-start">
+              Create institution
+            </Button>
+          </form>
+        </Card>
+      </Section>
     </main>
   );
 }

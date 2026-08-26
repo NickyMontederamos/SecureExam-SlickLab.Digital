@@ -45,3 +45,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ci-baseline-guard skill cache (regenerated per run, not durable state)
+.claude/ci-baseline.json

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CourseAccessDeniedError } from "../courses";
 import { ForbiddenError } from "../rbac";
 import { forPlatform } from "../tenant-db";
 import { addExamQuestion, createExam } from "../exams";
@@ -19,6 +20,7 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
   let courseA: { id: string };
   let courseB: { id: string };
   let facultyA: { id: string };
+  let unassignedFaculty: { id: string };
 
   beforeAll(async () => {
     const platform = forPlatform();
@@ -43,6 +45,19 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
         passwordHash: "not-a-real-hash",
       },
     });
+    await platform.courseFaculty.create({
+      data: { institutionId: institutionA.id, courseId: courseA.id, userId: facultyA.id },
+    });
+    // Same institution, deliberately never assigned to courseA.
+    unassignedFaculty = await platform.user.create({
+      data: {
+        institutionId: institutionA.id,
+        email: `unassigned-faculty-${runId}@test.local`,
+        name: "Unassigned Faculty",
+        role: "FACULTY",
+        passwordHash: "not-a-real-hash",
+      },
+    });
   });
 
   afterAll(async () => {
@@ -52,6 +67,7 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
     await platform.exam.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: { in: [institutionA.id, institutionB.id] } } });
     await platform.institution.deleteMany({ where: { id: { in: [institutionA.id, institutionB.id] } } });
@@ -78,7 +94,7 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
   });
 
   it("lists questions for a course including their latest version", async () => {
-    const questions = await listQuestionsForCourse(institutionA.id, { role: "FACULTY" }, courseA.id);
+    const questions = await listQuestionsForCourse(institutionA.id, { id: facultyA.id, role: "FACULTY" }, courseA.id);
     expect(questions.length).toBeGreaterThan(0);
     expect(questions[0].versions[0].prompt).toContain("consideration");
   });
@@ -120,7 +136,7 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
       { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Original prompt", points: 1 }
     );
 
-    const updated = await updateQuestion(institutionA.id, { role: "FACULTY" }, question.id, {
+    const updated = await updateQuestion(institutionA.id, { id: facultyA.id, role: "FACULTY" }, question.id, {
       prompt: "Edited prompt",
       points: 3,
     });
@@ -132,12 +148,12 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
       { id: facultyA.id, role: "FACULTY" },
       { courseId: courseA.id, title: "Locks The Question", timeLimitMinutes: 30 }
     );
-    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: exam.id, questionId: question.id, points: 3 });
+    await addExamQuestion(institutionA.id, { id: facultyA.id, role: "FACULTY" }, { examId: exam.id, questionId: question.id, points: 3 });
 
     await expect(
-      updateQuestion(institutionA.id, { role: "FACULTY" }, question.id, { prompt: "Too late", points: 3 })
+      updateQuestion(institutionA.id, { id: facultyA.id, role: "FACULTY" }, question.id, { prompt: "Too late", points: 3 })
     ).rejects.toThrow(QuestionInUseError);
-    await expect(deleteQuestion(institutionA.id, { role: "FACULTY" }, question.id)).rejects.toThrow(QuestionInUseError);
+    await expect(deleteQuestion(institutionA.id, { id: facultyA.id, role: "FACULTY" }, question.id)).rejects.toThrow(QuestionInUseError);
   });
 
   it("deletes an unused question outright", async () => {
@@ -147,10 +163,31 @@ describe("question bank (createQuestion / listQuestionsForCourse)", () => {
       { courseId: courseA.id, type: "ESSAY", prompt: "Delete me", points: 5 }
     );
 
-    await deleteQuestion(institutionA.id, { role: "FACULTY" }, question.id);
+    await deleteQuestion(institutionA.id, { id: facultyA.id, role: "FACULTY" }, question.id);
 
     await expect(
-      updateQuestion(institutionA.id, { role: "FACULTY" }, question.id, { prompt: "Gone", points: 1 })
+      updateQuestion(institutionA.id, { id: facultyA.id, role: "FACULTY" }, question.id, { prompt: "Gone", points: 1 })
     ).rejects.toThrow(QuestionNotFoundError);
+  });
+
+  it("refuses a faculty member who isn't assigned to the course (docs/PITCH_ROADMAP.md Milestone 6.6)", async () => {
+    const { question } = await createQuestion(
+      institutionA.id,
+      { id: facultyA.id, role: "FACULTY" },
+      { courseId: courseA.id, type: "SHORT_ANSWER", prompt: "Not yours to touch", points: 1 }
+    );
+
+    await expect(
+      listQuestionsForCourse(institutionA.id, { id: unassignedFaculty.id, role: "FACULTY" }, courseA.id)
+    ).rejects.toThrow(CourseAccessDeniedError);
+    await expect(
+      createQuestion(institutionA.id, { id: unassignedFaculty.id, role: "FACULTY" }, { courseId: courseA.id, type: "TRUE_FALSE", prompt: "Nope", points: 1 })
+    ).rejects.toThrow(CourseAccessDeniedError);
+    await expect(
+      updateQuestion(institutionA.id, { id: unassignedFaculty.id, role: "FACULTY" }, question.id, { prompt: "Hijacked", points: 1 })
+    ).rejects.toThrow(CourseAccessDeniedError);
+    await expect(
+      deleteQuestion(institutionA.id, { id: unassignedFaculty.id, role: "FACULTY" }, question.id)
+    ).rejects.toThrow(CourseAccessDeniedError);
   });
 });

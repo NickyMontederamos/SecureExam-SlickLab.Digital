@@ -1,7 +1,8 @@
 import type { Role } from "@prisma/client";
-import { assertCan } from "./rbac";
+import { assertCan, can } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { CourseNotFoundError } from "./questions";
+import { assertFacultyAssignedToCourse } from "./courses";
 
 export class ExamNotFoundError extends Error {
   constructor(examId: string) {
@@ -70,6 +71,7 @@ export async function createExam(institutionId: string, actor: { id: string; rol
   if (!course) {
     throw new CourseNotFoundError(input.courseId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, input.courseId);
 
   return db.$transaction(async (tx) => {
     const exam = await tx.exam.create({
@@ -101,9 +103,15 @@ export async function createExam(institutionId: string, actor: { id: string; rol
   });
 }
 
-/** Students only ever see PUBLISHED exams — draft exams are invisible to them, not merely uneditable. */
-export async function listExamsForCourse(institutionId: string, actor: { role: Role }, courseId: string) {
+/**
+ * Students only ever see PUBLISHED exams — draft exams are invisible to
+ * them, not merely uneditable. FACULTY must actually be assigned to this
+ * course (assertFacultyAssignedToCourse) — see its docstring in courses.ts
+ * for why role-level exam:"read" alone isn't enough.
+ */
+export async function listExamsForCourse(institutionId: string, actor: { id: string; role: Role }, courseId: string) {
   assertCan(actor.role, "exam", "read");
+  await assertFacultyAssignedToCourse(institutionId, actor, courseId);
 
   const db = forTenant(institutionId);
   return db.exam.findMany({
@@ -115,7 +123,7 @@ export async function listExamsForCourse(institutionId: string, actor: { role: R
   });
 }
 
-export async function getExam(institutionId: string, actor: { role: Role }, examId: string) {
+export async function getExam(institutionId: string, actor: { id: string; role: Role }, examId: string) {
   assertCan(actor.role, "exam", "read");
 
   const db = forTenant(institutionId);
@@ -136,6 +144,7 @@ export async function getExam(institutionId: string, actor: { role: Role }, exam
   if (!exam) {
     throw new ExamNotFoundError(examId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
   return exam;
 }
 
@@ -146,7 +155,7 @@ export async function getExam(institutionId: string, actor: { role: Role }, exam
  */
 export async function addExamQuestion(
   institutionId: string,
-  actor: { role: Role },
+  actor: { id: string; role: Role },
   input: { examId: string; questionId: string; points: number }
 ) {
   assertCan(actor.role, "exam", "update");
@@ -160,6 +169,7 @@ export async function addExamQuestion(
   if (!exam) {
     throw new ExamNotFoundError(input.examId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
   if (exam.status !== "DRAFT") {
     throw new ExamNotEditableError(input.examId);
   }
@@ -199,7 +209,7 @@ export async function addExamQuestion(
  * question is verified to belong to this tenant before any attachment
  * happens; if one id is bogus, nothing is attached.
  */
-export async function addExamQuestions(institutionId: string, actor: { role: Role }, examId: string, questionIds: string[]) {
+export async function addExamQuestions(institutionId: string, actor: { id: string; role: Role }, examId: string, questionIds: string[]) {
   assertCan(actor.role, "exam", "update");
   if (questionIds.length === 0) {
     return [];
@@ -214,6 +224,7 @@ export async function addExamQuestions(institutionId: string, actor: { role: Rol
   if (!exam) {
     throw new ExamNotFoundError(examId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
   if (exam.status !== "DRAFT") {
     throw new ExamNotEditableError(examId);
   }
@@ -258,7 +269,7 @@ export interface UpdateExamInput {
 }
 
 /** Edits an exam's title and its active version's settings — DRAFT only, same editability rule as adding questions. */
-export async function updateExam(institutionId: string, actor: { role: Role }, examId: string, input: UpdateExamInput) {
+export async function updateExam(institutionId: string, actor: { id: string; role: Role }, examId: string, input: UpdateExamInput) {
   assertCan(actor.role, "exam", "update");
 
   const db = forTenant(institutionId);
@@ -270,6 +281,7 @@ export async function updateExam(institutionId: string, actor: { role: Role }, e
   if (!exam) {
     throw new ExamNotFoundError(examId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
   if (exam.status !== "DRAFT") {
     throw new ExamNotEditableError(examId);
   }
@@ -299,7 +311,7 @@ export async function updateExam(institutionId: string, actor: { role: Role }, e
  * as adding one. Renumbers the remaining questions' `order` so the
  * displayed Q1/Q2/... never has a gap.
  */
-export async function removeExamQuestion(institutionId: string, actor: { role: Role }, examId: string, examQuestionId: string) {
+export async function removeExamQuestion(institutionId: string, actor: { id: string; role: Role }, examId: string, examQuestionId: string) {
   assertCan(actor.role, "exam", "update");
 
   const db = forTenant(institutionId);
@@ -311,6 +323,7 @@ export async function removeExamQuestion(institutionId: string, actor: { role: R
   if (!exam) {
     throw new ExamNotFoundError(examId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
   if (exam.status !== "DRAFT") {
     throw new ExamNotEditableError(examId);
   }
@@ -344,7 +357,18 @@ export async function removeExamQuestion(institutionId: string, actor: { role: R
  * both require PUBLISHED), so there's nothing downstream to protect, unlike
  * deleteCourse's content check in courses.ts.
  */
-export async function deleteExam(institutionId: string, actor: { role: Role }, examId: string) {
+/**
+ * DRAFT-only for the normal caller (FACULTY, or an INSTITUTION_ADMIN acting
+ * as one) — safe unconditionally, since a draft can never have a student
+ * attempt against it. An actor who also holds exam_attempt:"delete" (in
+ * practice only INSTITUTION_ADMIN — see rbac.ts) can force-delete *any*
+ * status, cascading every attempt/answer/event/submission along with it —
+ * real admin "reset this exam" power, not something FACULTY gets even
+ * though they share exam:"delete". $transaction here isn't optional: this
+ * touches five tables in FK-dependency order, and a partial failure midway
+ * would leave orphaned rows no UI could reach again.
+ */
+export async function deleteExam(institutionId: string, actor: { id: string; role: Role }, examId: string) {
   assertCan(actor.role, "exam", "delete");
 
   const db = forTenant(institutionId);
@@ -353,11 +377,27 @@ export async function deleteExam(institutionId: string, actor: { role: Role }, e
   if (!exam) {
     throw new ExamNotFoundError(examId);
   }
-  if (exam.status !== "DRAFT") {
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
+
+  const canForceDelete = can(actor.role, "exam_attempt", "delete");
+  if (exam.status !== "DRAFT" && !canForceDelete) {
     throw new ExamNotEditableError(examId);
   }
 
+  if (exam.status === "DRAFT") {
+    await db.$transaction([
+      db.examQuestion.deleteMany({ where: { examVersion: { examId } } }),
+      db.examVersion.deleteMany({ where: { examId } }),
+      db.exam.delete({ where: { id: examId } }),
+    ]);
+    return;
+  }
+
   await db.$transaction([
+    db.attemptEvent.deleteMany({ where: { attempt: { examVersion: { examId } } } }),
+    db.submission.deleteMany({ where: { attempt: { examVersion: { examId } } } }),
+    db.examAnswer.deleteMany({ where: { attempt: { examVersion: { examId } } } }),
+    db.examAttempt.deleteMany({ where: { examVersion: { examId } } }),
     db.examQuestion.deleteMany({ where: { examVersion: { examId } } }),
     db.examVersion.deleteMany({ where: { examId } }),
     db.exam.delete({ where: { id: examId } }),
@@ -365,7 +405,7 @@ export async function deleteExam(institutionId: string, actor: { role: Role }, e
 }
 
 /** Freezes the active version and marks the exam PUBLISHED. Irreversible in Phase 1 — no unpublish. */
-export async function publishExam(institutionId: string, actor: { role: Role }, examId: string) {
+export async function publishExam(institutionId: string, actor: { id: string; role: Role }, examId: string) {
   assertCan(actor.role, "exam", "publish");
 
   const db = forTenant(institutionId);
@@ -377,6 +417,7 @@ export async function publishExam(institutionId: string, actor: { role: Role }, 
   if (!exam) {
     throw new ExamNotFoundError(examId);
   }
+  await assertFacultyAssignedToCourse(institutionId, actor, exam.courseId);
   if (exam.status !== "DRAFT") {
     throw new ExamNotEditableError(examId);
   }

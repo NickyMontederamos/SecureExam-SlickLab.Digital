@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { Button } from "@/components/ui";
 
 export interface QuestionPagerMeta {
   id: string;
@@ -33,12 +34,12 @@ export function ExamQuestionPager({ questions, children }: { questions: Question
             onClick={() => setActive(i)}
             aria-current={i === active}
             className={
-              "relative h-8 w-8 rounded border text-xs font-medium " +
+              "relative h-8 w-8 rounded-lg border text-xs font-medium transition-colors " +
               (i === active
-                ? "border-black bg-black text-white"
+                ? "border-brand-primary bg-brand-primary text-white"
                 : q.answered
-                  ? "border-gray-300 bg-gray-100 text-gray-700"
-                  : "border-gray-300 bg-white text-gray-500")
+                  ? "border-slate-300 bg-slate-100 text-slate-700"
+                  : "border-slate-300 bg-white text-slate-500 hover:bg-slate-50")
             }
           >
             {i + 1}
@@ -56,25 +57,25 @@ export function ExamQuestionPager({ questions, children }: { questions: Question
       ))}
 
       <div className="flex items-center justify-between">
-        <button
+        <Button
           type="button"
+          variant="secondary"
           onClick={() => setActive((i) => Math.max(0, i - 1))}
           disabled={active === 0}
-          className="rounded border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-40"
         >
           ← Previous
-        </button>
-        <span className="text-xs text-gray-500">
+        </Button>
+        <span className="text-xs text-slate-500">
           Question {active + 1} of {total}
         </span>
-        <button
+        <Button
           type="button"
+          variant="secondary"
           onClick={() => setActive((i) => Math.min(total - 1, i + 1))}
           disabled={active === total - 1}
-          className="rounded border px-3 py-2 text-sm disabled:cursor-not-allowed disabled:opacity-40"
         >
           Next →
-        </button>
+        </Button>
       </div>
     </div>
   );

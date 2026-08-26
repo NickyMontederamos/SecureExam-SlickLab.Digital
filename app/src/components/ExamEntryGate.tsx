@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Alert, Button, Card } from "@/components/ui";
 
 type GateStep = "receipt" | "rules" | "device" | "identity" | "room" | "proctor" | "starting";
 
@@ -130,42 +131,38 @@ export function ExamEntryGate({
 
   if (step === "receipt") {
     return (
-      <div className="flex flex-col gap-3 rounded border p-4">
-        <h2 className="font-medium">Booking Confirmed</h2>
-        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-          <dt className="text-gray-500">Confirmation code</dt>
-          <dd className="font-mono">{confirmationCode}</dd>
-          <dt className="text-gray-500">Exam</dt>
-          <dd>{examTitle}</dd>
+      <Card className="flex flex-col gap-3">
+        <h2 className="font-semibold text-slate-900">Booking Confirmed</h2>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-sm">
+          <dt className="text-slate-500">Confirmation code</dt>
+          <dd className="font-mono text-slate-900">{confirmationCode}</dd>
+          <dt className="text-slate-500">Exam</dt>
+          <dd className="text-slate-900">{examTitle}</dd>
           {scheduledForLabel ? (
             <>
-              <dt className="text-gray-500">Your scheduled time</dt>
-              <dd>{scheduledForLabel}</dd>
+              <dt className="text-slate-500">Your scheduled time</dt>
+              <dd className="text-slate-900">{scheduledForLabel}</dd>
             </>
           ) : (
             <>
-              <dt className="text-gray-500">Available window</dt>
-              <dd>{windowLabel ?? "No fixed window — start anytime"}</dd>
+              <dt className="text-slate-500">Available window</dt>
+              <dd className="text-slate-900">{windowLabel ?? "No fixed window — start anytime"}</dd>
             </>
           )}
         </dl>
-        <button
-          type="button"
-          onClick={() => setStep("rules")}
-          className="self-start rounded bg-black px-3 py-2 text-white"
-        >
+        <Button type="button" onClick={() => setStep("rules")} className="self-start">
           Continue to Exam Rules
-        </button>
-      </div>
+        </Button>
+      </Card>
     );
   }
 
   if (step === "rules") {
     return (
-      <div className="flex flex-col gap-4 rounded border p-4">
+      <Card className="flex flex-col gap-4">
         <div>
-          <h2 className="mb-2 font-medium">Exam Rules</h2>
-          <ul className="list-disc space-y-1 pl-5 text-sm text-gray-600">
+          <h2 className="mb-2 font-semibold text-slate-900">Exam Rules</h2>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
             <li>You get one attempt at this exam — there are no retakes.</li>
             <li>The timer starts the moment you begin and cannot be paused.</li>
             <li>Leaving the exam window or switching tabs is logged and limited.</li>
@@ -173,31 +170,22 @@ export function ExamEntryGate({
             <li>Submit before time runs out — the exam auto-submits at zero.</li>
           </ul>
         </div>
-        {error && (
-          <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-        <label className="flex items-start gap-2 text-sm">
+        {error && <Alert tone="error">{error}</Alert>}
+        <label className="flex items-start gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={agreed} onChange={(e) => setAgreed(e.target.checked)} className="mt-1" />
           I have read and agree to the exam rules above.
         </label>
-        <button
-          type="button"
-          disabled={!agreed}
-          onClick={runGateSequence}
-          className="self-start rounded bg-black px-3 py-2 text-white disabled:cursor-not-allowed disabled:opacity-40"
-        >
+        <Button type="button" disabled={!agreed} onClick={runGateSequence} className="self-start">
           Start Exam
-        </button>
-      </div>
+        </Button>
+      </Card>
     );
   }
 
   return (
-    <div className="flex flex-col items-center gap-3 rounded border p-8 text-center">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-300 border-t-black" />
-      <p className="text-sm font-medium">{STEP_LABELS[step]}</p>
-    </div>
+    <Card className="flex flex-col items-center gap-3 py-8 text-center">
+      <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-200 border-t-brand-primary" />
+      <p className="text-sm font-medium text-slate-700">{STEP_LABELS[step]}</p>
+    </Card>
   );
 }

@@ -3,6 +3,7 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/auth";
 import { can } from "@/lib/rbac";
 import { createCourse, CourseCodeTakenError, listCoursesForUser } from "@/lib/courses";
+import { Alert, Button, Card, EmptyState, PageHeader, Section, inputClassName, labelClassName } from "@/components/ui";
 
 export default async function DashboardPage({
   searchParams,
@@ -36,10 +37,8 @@ export default async function DashboardPage({
 
   const courses = await listCoursesForUser(institutionId, session.user);
 
-  const isAdmin = session.user.role === "INSTITUTION_ADMIN";
-  const courseLinkPath = session.user.role === "STUDENT" ? "exams" : isAdmin ? "manage" : "questions";
+  const courseLinkPath = session.user.role === "STUDENT" ? "exams" : "";
   const canCreateCourse = can(session.user.role, "course", "create");
-  const canManageUsers = can(session.user.role, "user", "create");
 
   async function createCourseAction(formData: FormData) {
     "use server";
@@ -64,64 +63,61 @@ export default async function DashboardPage({
     revalidatePath("/dashboard");
   }
 
-  return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Welcome, {session.user.name}</h1>
-          <p className="text-sm text-gray-500">
-            Role: {session.user.role} · Institution-scoped session (institutionId: {session.user.institutionId})
-          </p>
-        </div>
-        {canManageUsers && (
-          <a href="/users" className="text-sm underline">
-            Users
-          </a>
-        )}
-      </div>
+  const coursesLabel =
+    session.user.role === "STUDENT" ? "My Courses" : session.user.role === "FACULTY" ? "Courses I Teach" : "Courses";
 
-      <section>
-        <h2 className="mb-2 font-medium">
-          {session.user.role === "STUDENT" ? "My Courses" : session.user.role === "FACULTY" ? "Courses I Teach" : "Courses"}
-        </h2>
-        <ul className="flex flex-col gap-1">
-          {courses.map((course) => (
-            <li key={course.id} className="rounded border px-3 py-2 text-sm">
-              <a href={`/courses/${course.id}/${courseLinkPath}`} className="hover:underline">
-                {course.code} — {course.name} ({course.academicYear})
-              </a>
-            </li>
-          ))}
-          {courses.length === 0 && <li className="text-sm text-gray-500">No courses yet.</li>}
-        </ul>
-      </section>
+  return (
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 p-6">
+      <PageHeader title={`Welcome, ${session.user.name}`} subtitle={`Signed in as ${session.user.role}`} />
+
+      <Section title={coursesLabel}>
+        {courses.length === 0 ? (
+          <EmptyState>No courses yet.</EmptyState>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {courses.map((course) => (
+              <li key={course.id}>
+                <a href={courseLinkPath ? `/courses/${course.id}/${courseLinkPath}` : `/courses/${course.id}`}>
+                  <Card interactive className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-900">
+                      {course.code} — {course.name}
+                    </span>
+                    <span className="text-xs text-slate-500">{course.academicYear}</span>
+                  </Card>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
 
       {canCreateCourse && (
-        <section className="rounded border p-4">
-          <h2 className="mb-3 font-medium">Create a course</h2>
-          {error && (
-            <p role="alert" className="mb-3 rounded bg-red-100 p-2 text-sm text-red-700">
-              {error}
-            </p>
-          )}
-          <form action={createCourseAction} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-sm">
-              Code
-              <input name="code" required placeholder="LAW101" className="rounded border px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Name
-              <input name="name" required className="rounded border px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Academic year
-              <input name="academicYear" required placeholder="2026-2027" className="rounded border px-3 py-2" />
-            </label>
-            <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-              Create course
-            </button>
-          </form>
-        </section>
+        <Section title="Create a course">
+          <Card>
+            {error && (
+              <div className="mb-3">
+                <Alert tone="error">{error}</Alert>
+              </div>
+            )}
+            <form action={createCourseAction} className="flex flex-col gap-3">
+              <label className={labelClassName}>
+                Code
+                <input name="code" required placeholder="LAW101" className={inputClassName} />
+              </label>
+              <label className={labelClassName}>
+                Name
+                <input name="name" required className={inputClassName} />
+              </label>
+              <label className={labelClassName}>
+                Academic year
+                <input name="academicYear" required placeholder="2026-2027" className={inputClassName} />
+              </label>
+              <Button type="submit" className="self-start">
+                Create course
+              </Button>
+            </form>
+          </Card>
+        </Section>
       )}
     </main>
   );

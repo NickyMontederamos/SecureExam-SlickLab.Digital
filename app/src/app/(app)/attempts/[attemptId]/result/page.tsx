@@ -2,6 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { AttemptNotFoundError, AttemptOwnershipError, getAttemptResult } from "@/lib/attempts";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { Alert, Card, PageHeader } from "@/components/ui";
 
 export default async function AttemptResultPage({
   params,
@@ -39,59 +40,55 @@ export default async function AttemptResultPage({
   // and skip this gate entirely — that result is shown immediately below.
   if (result.attempt.status !== "TERMINATED" && !result.attempt.submission?.verifiedAt) {
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
         <AutoRefresh intervalMs={5000} />
-        <div>
-          <a href="/dashboard" className="text-sm text-gray-500">
-            ← Dashboard
-          </a>
-          <h1 className="text-xl font-semibold">{result.attempt.examVersion.exam.title}</h1>
+        <PageHeader backHref="/dashboard" title={result.attempt.examVersion.exam.title} />
+        <div className="flex flex-col items-center gap-4 py-8 text-center">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-300 border-t-brand-primary" />
+          <Alert tone="warning">
+            Your exam has been submitted. Waiting for your proctor to approve closing out your session — this page
+            updates automatically once that happens.
+          </Alert>
         </div>
-        <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
-          Your exam has been submitted. Waiting for your proctor to approve closing out your session — this page
-          updates automatically once that happens.
-        </p>
       </main>
     );
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <a href="/dashboard" className="text-sm text-gray-500">
-          ← Dashboard
-        </a>
-        <h1 className="text-xl font-semibold">{result.attempt.examVersion.exam.title} — Result</h1>
-        {expired === "1" && (
-          <p className="text-sm text-amber-700">Time expired — this exam was auto-submitted.</p>
-        )}
-        {result.attempt.status === "TERMINATED" ? (
-          <p className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-800">
-            This attempt was terminated following an integrity review — a faculty member confirmed a violation after
-            repeated warnings during the exam. Contact your instructor if you believe this was in error.
-          </p>
-        ) : (
-          <p className="text-sm text-gray-500">
-            {result.isFullyGraded
-              ? `Score: ${result.scoredPoints} / ${result.totalPoints}`
-              : `Partial score so far: ${result.scoredPoints} / ${result.totalPoints} (some answers pending manual grading)`}
-          </p>
-        )}
-      </div>
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
+      <PageHeader backHref="/dashboard" title={`${result.attempt.examVersion.exam.title} — Result`} />
 
-      <section className="flex flex-col gap-2">
+      {expired === "1" && <Alert tone="warning">Time expired — this exam was auto-submitted.</Alert>}
+
+      {result.attempt.status === "TERMINATED" ? (
+        <Alert tone="error">
+          This attempt was terminated following an integrity review — a faculty member confirmed a violation after
+          repeated warnings during the exam. Contact your instructor if you believe this was in error.
+        </Alert>
+      ) : (
+        <Card className="flex flex-col items-center gap-1 py-6 text-center">
+          <span className="text-4xl font-semibold tracking-tight text-slate-900">
+            {result.scoredPoints} <span className="text-2xl font-normal text-slate-400">/ {result.totalPoints}</span>
+          </span>
+          <span className="text-sm text-slate-500">
+            {result.isFullyGraded ? "Final score" : "Partial score so far — some answers pending manual grading"}
+          </span>
+        </Card>
+      )}
+
+      <div className="flex flex-col gap-2">
         {result.breakdown.map((row, i) => (
-          <div key={i} className="rounded border p-3 text-sm">
+          <Card key={i} className="text-sm">
             <div className="flex items-center justify-between">
-              <span>Q{i + 1}</span>
-              <span className="text-gray-500">
+              <span className="font-medium text-slate-900">Q{i + 1}</span>
+              <span className="text-slate-500">
                 {row.pending ? "Pending grading" : `${row.pointsAwarded} / ${row.maxPoints} pt(s)`}
               </span>
             </div>
-            <p className="mt-1">{row.prompt}</p>
-          </div>
+            <p className="mt-1 text-slate-700">{row.prompt}</p>
+          </Card>
         ))}
-      </section>
+      </div>
     </main>
   );
 }

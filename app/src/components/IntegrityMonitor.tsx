@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { AttemptEventType } from "@prisma/client";
+import { Alert } from "@/components/ui";
 
 const WARNING_THRESHOLD = 3;
 
@@ -88,9 +89,9 @@ export function IntegrityMonitor({
   }
 
   return (
-    <p role="status" className="rounded border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800">
+    <Alert tone="warning">
       Warning {Math.min(warningCount, WARNING_THRESHOLD)} of {WARNING_THRESHOLD} — leaving this window or exiting
       fullscreen is being logged. Reaching {WARNING_THRESHOLD} pauses the exam for faculty review.
-    </p>
+    </Alert>
   );
 }

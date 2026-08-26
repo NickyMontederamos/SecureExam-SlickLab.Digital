@@ -1,5 +1,6 @@
-import type { AuditResult, Prisma } from "@prisma/client";
-import { forPlatform } from "./tenant-db";
+import type { AuditResult, Prisma, Role } from "@prisma/client";
+import { assertCan } from "./rbac";
+import { forPlatform, forTenant } from "./tenant-db";
 
 interface AuditEvent {
   institutionId?: string | null;
@@ -41,4 +42,35 @@ export async function logAudit(event: AuditEvent): Promise<void> {
   } catch (error) {
     console.error("[audit] failed to write audit log entry", event.action, error);
   }
+}
+
+export interface AuditLogFilter {
+  result?: AuditResult;
+  actorUserId?: string;
+  /** Matches the start of `action` (e.g. "auth." to see every login/logout event). */
+  actionPrefix?: string;
+  limit?: number;
+}
+
+/**
+ * Institution-scoped audit trail read for the admin audit-log viewer
+ * (docs/PITCH_ROADMAP.md Milestone 6.7). Gated by rbac.ts's audit_log:"read"
+ * (SUPER_ADMIN/PLATFORM_ADMIN/INSTITUTION_ADMIN only). Rows with a null
+ * institutionId (e.g. a failed login before the tenant was resolved) never
+ * belonged to this tenant and are correctly excluded by forTenant's scoping.
+ */
+export async function listAuditLog(institutionId: string, actor: { role: Role }, filter: AuditLogFilter = {}) {
+  assertCan(actor.role, "audit_log", "read");
+
+  const db = forTenant(institutionId);
+  return db.auditLog.findMany({
+    where: {
+      ...(filter.result ? { result: filter.result } : {}),
+      ...(filter.actorUserId ? { actorUserId: filter.actorUserId } : {}),
+      ...(filter.actionPrefix ? { action: { startsWith: filter.actionPrefix } } : {}),
+    },
+    include: { actor: true },
+    orderBy: { createdAt: "desc" },
+    take: filter.limit ?? 200,
+  });
 }

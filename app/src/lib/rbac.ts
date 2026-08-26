@@ -49,7 +49,13 @@ const PERMISSIONS: PermissionMatrix = {
     course: ["create", "read", "update", "delete"],
     question: ["create", "read", "update", "delete"],
     exam: ["create", "read", "update", "delete", "publish"],
-    exam_attempt: ["read"],
+    // "approve" gives an institution admin the same proctor-queue authority
+    // as an actual PROCTOR, institution-wide (not scoped to a CourseProctor
+    // assignment — see proctoring.ts's scopedCourseIds). "delete" is new,
+    // admin-only destructive power: cancel a stuck/wrong attempt, or force-
+    // delete an exam regardless of status (FACULTY's exam:"delete" above is
+    // DRAFT-only — see exams.ts's deleteExam).
+    exam_attempt: ["read", "approve", "delete"],
     grade: ["read", "grade"],
     audit_log: ["read"],
   },

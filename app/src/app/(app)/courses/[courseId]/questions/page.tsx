@@ -6,6 +6,7 @@ import { can } from "@/lib/rbac";
 import { createQuestion, deleteQuestion, listQuestionsForCourse, QuestionInUseError, updateQuestion } from "@/lib/questions";
 import { importQuestionsFromCsv, QuestionImportValidationError } from "@/lib/question-import";
 import { forTenant } from "@/lib/tenant-db";
+import { Alert, Button, Card, EmptyState, LinkButton, PageHeader, Section, inputClassName, labelClassName } from "@/components/ui";
 
 const CHOICE_TYPES = new Set<QuestionType>(["MULTIPLE_CHOICE", "MULTIPLE_RESPONSE", "TRUE_FALSE"]);
 
@@ -181,167 +182,161 @@ export default async function CourseQuestionsPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <a href="/dashboard" className="text-sm text-gray-500">
-          ← Dashboard
-        </a>
-        <h1 className="text-xl font-semibold">
-          {course.code} — {course.name}
-        </h1>
-        <p className="text-sm text-gray-500">
-          Question bank · <a href={`/courses/${courseId}/exams`} className="underline">Exams</a>
-        </p>
-      </div>
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 p-6">
+      <PageHeader
+        backHref={`/courses/${courseId}`}
+        title={`${course.code} — ${course.name}`}
+        subtitle="Question bank"
+        actions={
+          <LinkButton href={`/courses/${courseId}/exams`} variant="secondary">
+            Exams
+          </LinkButton>
+        }
+      />
 
-      {imported && (
-        <p className="rounded bg-green-100 p-2 text-sm text-green-800">Imported {imported} question(s).</p>
-      )}
-      {importError && (
-        <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
-          Import failed — nothing was added: {importError}
-        </p>
-      )}
-      {editError && (
-        <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
-          {editError}
-        </p>
-      )}
+      {imported && <Alert tone="success">Imported {imported} question(s).</Alert>}
+      {importError && <Alert tone="error">Import failed — nothing was added: {importError}</Alert>}
+      {editError && <Alert tone="error">{editError}</Alert>}
 
-      <section className="flex flex-col gap-2">
-        {questions.length === 0 && <p className="text-sm text-gray-500">No questions yet.</p>}
+      <Section title={`Questions (${questions.length})`}>
+        {questions.length === 0 && <EmptyState>No questions yet.</EmptyState>}
+        <div className="flex flex-col gap-2">
         {questions.map((question) => {
           const latest = question.versions[0];
           const isUnused = question._count.examQuestions === 0;
 
           if (edit === question.id && canUpdate && isUnused) {
             return (
-              <form
-                key={question.id}
-                action={updateQuestionAction}
-                className="flex flex-col gap-3 rounded border border-black p-3 text-sm"
-              >
-                <input type="hidden" name="questionId" value={question.id} />
-                <input type="hidden" name="type" value={question.type} />
-                <p className="text-xs text-gray-500">{question.type} (type can&apos;t be changed after creation)</p>
-                <label className="flex flex-col gap-1">
-                  Prompt
-                  <textarea name="prompt" required rows={2} defaultValue={latest?.prompt} className="rounded border px-3 py-2" />
-                </label>
-                {CHOICE_TYPES.has(question.type) && (
-                  <label className="flex flex-col gap-1">
-                    Choices (one per line, prefix the correct one(s) with *)
-                    <textarea
-                      name="choicesText"
-                      rows={4}
-                      defaultValue={formatChoicesText(latest?.choices, latest?.correctAnswer)}
-                      className="rounded border px-3 py-2 font-mono text-xs"
-                    />
+              <form key={question.id} action={updateQuestionAction}>
+                <Card className="flex flex-col gap-3 ring-2 ring-brand-primary">
+                  <input type="hidden" name="questionId" value={question.id} />
+                  <input type="hidden" name="type" value={question.type} />
+                  <p className="text-xs text-slate-500">{question.type} (type can&apos;t be changed after creation)</p>
+                  <label className={labelClassName}>
+                    Prompt
+                    <textarea name="prompt" required rows={2} defaultValue={latest?.prompt} className={inputClassName} />
                   </label>
-                )}
-                <label className="flex flex-col gap-1">
-                  Points
-                  <input name="points" type="number" step="0.5" defaultValue={latest?.points ?? 1} className="rounded border px-3 py-2" />
-                </label>
-                <div className="flex gap-2">
-                  <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-                    Save
-                  </button>
-                  <a href={`/courses/${courseId}/questions`} className="rounded border px-3 py-2">
-                    Cancel
-                  </a>
-                </div>
+                  {CHOICE_TYPES.has(question.type) && (
+                    <label className={labelClassName}>
+                      Choices (one per line, prefix the correct one(s) with *)
+                      <textarea
+                        name="choicesText"
+                        rows={4}
+                        defaultValue={formatChoicesText(latest?.choices, latest?.correctAnswer)}
+                        className={`${inputClassName} font-mono text-xs`}
+                      />
+                    </label>
+                  )}
+                  <label className={labelClassName}>
+                    Points
+                    <input name="points" type="number" step="0.5" defaultValue={latest?.points ?? 1} className={inputClassName} />
+                  </label>
+                  <div className="flex gap-2">
+                    <Button type="submit">Save</Button>
+                    <LinkButton href={`/courses/${courseId}/questions`} variant="secondary">
+                      Cancel
+                    </LinkButton>
+                  </div>
+                </Card>
               </form>
             );
           }
 
           return (
-            <div key={question.id} className="rounded border p-3 text-sm">
+            <Card key={question.id} className="text-sm">
               <div className="flex items-center justify-between">
-                <span className="font-medium">{question.type}</span>
+                <span className="font-medium text-slate-900">{question.type}</span>
                 <span className="flex items-center gap-3">
-                  <span className="text-gray-500">{latest?.points ?? 0} pt(s)</span>
+                  <span className="text-slate-500">{latest?.points ?? 0} pt(s)</span>
                   {isUnused ? (
                     <>
                       {canUpdate && (
-                        <a href={`/courses/${courseId}/questions?edit=${question.id}`} className="text-xs underline">
+                        <LinkButton
+                          href={`/courses/${courseId}/questions?edit=${question.id}`}
+                          variant="secondary"
+                          className="px-2.5 py-1 text-xs"
+                        >
                           Edit
-                        </a>
+                        </LinkButton>
                       )}
                       {canDelete && (
                         <form action={deleteQuestionAction}>
                           <input type="hidden" name="questionId" value={question.id} />
-                          <button type="submit" className="text-xs text-red-700 underline">
+                          <Button type="submit" variant="danger" className="px-2.5 py-1 text-xs">
                             Delete
-                          </button>
+                          </Button>
                         </form>
                       )}
                     </>
                   ) : (
                     (canUpdate || canDelete) && (
-                      <span className="text-xs text-gray-400" title="Already attached to an exam — its wording is locked in for that exam's record">
+                      <span
+                        className="text-xs text-slate-400"
+                        title="Already attached to an exam — its wording is locked in for that exam's record"
+                      >
                         Used in an exam
                       </span>
                     )
                   )}
                 </span>
               </div>
-              <p className="mt-1">{latest?.prompt}</p>
-            </div>
+              <p className="mt-1 text-slate-700">{latest?.prompt}</p>
+            </Card>
           );
         })}
-      </section>
+        </div>
+      </Section>
 
       {canCreate && (
         <>
-          <section className="rounded border p-4">
-            <h2 className="mb-3 font-medium">Import from CSV</h2>
-            <p className="mb-3 text-xs text-gray-500">
-              All-or-nothing: if any row is invalid, nothing is imported and you&apos;ll see exactly which rows to
-              fix.{" "}
-              <a href="/templates/question-bank-template.csv" download className="underline">
+          <Section
+            title="Import from CSV"
+            description="All-or-nothing: if any row is invalid, nothing is imported and you'll see exactly which rows to fix."
+          >
+            <Card className="flex flex-col gap-3">
+              <LinkButton href="/templates/question-bank-template.csv" download variant="secondary" className="self-start">
                 Download the template
-              </a>
-              .
-            </p>
-            <form action={importCsvAction} className="flex items-center gap-2">
-              <input name="file" type="file" accept=".csv,text/csv" required className="flex-1 text-sm" />
-              <button type="submit" className="rounded border px-3 py-2 text-sm">
-                Import
-              </button>
-            </form>
-          </section>
+              </LinkButton>
+              <form action={importCsvAction} className="flex items-center gap-2">
+                <input name="file" type="file" accept=".csv,text/csv" required className="flex-1 text-sm" />
+                <Button type="submit" variant="secondary">
+                  Import
+                </Button>
+              </form>
+            </Card>
+          </Section>
 
-          <section className="rounded border p-4">
-            <h2 className="mb-3 font-medium">Add a question</h2>
-            <form action={createQuestionAction} className="flex flex-col gap-3">
-              <label className="flex flex-col gap-1 text-sm">
-                Type
-                <select name="type" className="rounded border px-3 py-2" defaultValue="MULTIPLE_CHOICE">
-                  <option value="MULTIPLE_CHOICE">Multiple choice</option>
-                  <option value="MULTIPLE_RESPONSE">Multiple response</option>
-                  <option value="TRUE_FALSE">True / False</option>
-                  <option value="SHORT_ANSWER">Short answer</option>
-                  <option value="ESSAY">Essay</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Prompt
-                <textarea name="prompt" required rows={2} className="rounded border px-3 py-2" />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Choices (one per line, prefix the correct one(s) with *) — leave blank for short answer/essay
-                <textarea name="choicesText" rows={4} className="rounded border px-3 py-2 font-mono text-xs" />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Points
-                <input name="points" type="number" step="0.5" defaultValue={1} className="rounded border px-3 py-2" />
-              </label>
-              <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-                Add question
-              </button>
-            </form>
-          </section>
+          <Section title="Add a question">
+            <Card>
+              <form action={createQuestionAction} className="flex flex-col gap-3">
+                <label className={labelClassName}>
+                  Type
+                  <select name="type" className={inputClassName} defaultValue="MULTIPLE_CHOICE">
+                    <option value="MULTIPLE_CHOICE">Multiple choice</option>
+                    <option value="MULTIPLE_RESPONSE">Multiple response</option>
+                    <option value="TRUE_FALSE">True / False</option>
+                    <option value="SHORT_ANSWER">Short answer</option>
+                    <option value="ESSAY">Essay</option>
+                  </select>
+                </label>
+                <label className={labelClassName}>
+                  Prompt
+                  <textarea name="prompt" required rows={2} className={inputClassName} />
+                </label>
+                <label className={labelClassName}>
+                  Choices (one per line, prefix the correct one(s) with *) — leave blank for short answer/essay
+                  <textarea name="choicesText" rows={4} className={`${inputClassName} font-mono text-xs`} />
+                </label>
+                <label className={labelClassName}>
+                  Points
+                  <input name="points" type="number" step="0.5" defaultValue={1} className={inputClassName} />
+                </label>
+                <Button type="submit" className="self-start">
+                  Add question
+                </Button>
+              </form>
+            </Card>
+          </Section>
         </>
       )}
     </main>

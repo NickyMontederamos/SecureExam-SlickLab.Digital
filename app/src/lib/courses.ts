@@ -32,6 +32,40 @@ export class CourseHasContentError extends Error {
   }
 }
 
+export class CourseAccessDeniedError extends Error {
+  constructor(courseId: string) {
+    super(`Not authorized to access course ${courseId}`);
+    this.name = "CourseAccessDeniedError";
+  }
+}
+
+/**
+ * The actual "assigned courses only" enforcement for FACULTY — role-level
+ * exam/question permissions (rbac.ts) are shared by every FACULTY user in
+ * the institution, so without this, any faculty account could open
+ * `/courses/<any-course-id>/exams` for a course they don't teach (just by
+ * knowing/guessing its id) and both view *and create* content there.
+ * listCoursesForUser's FACULTY filter only controls what the dashboard
+ * *lists* — it was never itself a boundary. Every other role that reaches
+ * course content (INSTITUTION_ADMIN via the FACULTY-permission merge,
+ * SUPER_ADMIN) is institution-wide and skips this, same reasoning as
+ * proctoring.ts's hasInstitutionWideAuthority.
+ */
+export async function assertFacultyAssignedToCourse(
+  institutionId: string,
+  actor: { id: string; role: Role },
+  courseId: string
+) {
+  if (actor.role !== "FACULTY") {
+    return;
+  }
+  const db = forTenant(institutionId);
+  const assignment = await db.courseFaculty.findFirst({ where: { courseId, userId: actor.id } });
+  if (!assignment) {
+    throw new CourseAccessDeniedError(courseId);
+  }
+}
+
 /**
  * Role-appropriate course list for the dashboard: students see only what
  * they're enrolled in, faculty see only what they teach, everyone else
@@ -83,9 +117,17 @@ export async function createCourse(institutionId: string, actor: { role: Role },
   });
 }
 
-/** Tenant-scoped detail view including who teaches it, who's enrolled, and how much content it has — for the admin's course management page. */
-export async function getCourseWithRoster(institutionId: string, actor: { role: Role }, courseId: string) {
+/**
+ * Tenant-scoped detail view including who teaches it, who's enrolled, and
+ * how much content it has — for the admin's course management page and the
+ * faculty/admin course-home page. FACULTY must actually be assigned (see
+ * assertFacultyAssignedToCourse above) — this previously only checked
+ * role-level course:"read", closed the same way as the exam/question
+ * functions in Milestone 6.6.
+ */
+export async function getCourseWithRoster(institutionId: string, actor: { id: string; role: Role }, courseId: string) {
   assertCan(actor.role, "course", "read");
+  await assertFacultyAssignedToCourse(institutionId, actor, courseId);
 
   const db = forTenant(institutionId);
   const course = await db.course.findFirst({

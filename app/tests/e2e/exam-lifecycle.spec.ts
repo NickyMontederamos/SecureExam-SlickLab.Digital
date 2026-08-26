@@ -26,6 +26,8 @@ test.describe.serial("full exam lifecycle", () => {
     await login(page, "faculty@cmlaw.demo");
 
     await page.click("text=LAW101");
+    await expect(page).toHaveURL(/\/courses\/[^/]+$/);
+    await page.click("text=Question bank");
     await expect(page).toHaveURL(/questions/);
 
     await page.selectOption('select[name="type"]', "MULTIPLE_CHOICE");
@@ -124,6 +126,11 @@ test.describe.serial("full exam lifecycle", () => {
 
     // The student's page polls every few seconds (AutoRefresh) rather than
     // pushing in real time — this app has no WebSocket/SSE infrastructure.
-    await expect(page.getByText(/Score: 1 \/ 1/)).toBeVisible({ timeout: 20_000 });
+    // "Final score" (not "Partial score...") only renders once every
+    // question is graded — the UI/UX pass (Milestone 6) replaced the old
+    // "Score: 1 / 1" sentence with a large score number plus this label, so
+    // this checks the label rather than a "1 / 1" pattern that also
+    // (ambiguously) appears in the per-question breakdown row below it.
+    await expect(page.getByText("Final score")).toBeVisible({ timeout: 20_000 });
   });
 });

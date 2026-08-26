@@ -342,7 +342,410 @@ the gaps that actually blocked "manage this easily," not a redesign.
   `npm run test:e2e` (4/4, confirming the existing faculty create/publish and full
   proctor-gate flows are unaffected by the additions).
 
+## Milestone 6 — UI/UX pass: shared design system, real navigation, branding everywhere
+
+**Built 2026-08-26**, same day, on direct request: "scan all the app folder and files,
+research and document UI/UX user friendly, brainstorm how to apply it to all app
+pages... upgrade UI/UX of admin, faculty, proctor and student... make it an optimized
+app, effective branding logo display and app logic." Self-assessed by reading every
+page in the app (17 routes across all 4 roles) before touching anything.
+
+**What the scan found:** no shared component library — every page hand-rolled its own
+`rounded border p-3 text-sm` markup, with small style drifts between pages doing the
+same thing. No real navigation — the only way "home" was a plain-text back link; nothing
+in the UI pointed to `/users` or `/proctor` except the dashboard page itself. Institution
+branding (`primaryColor`/`secondaryColor`, set per-tenant in `Institution`) was used in
+exactly one place in the entire app — the login button — nowhere else, including the
+header. The root `/` route was still the **unedited `create-next-app` boilerplate**
+(Vercel/Next.js marketing links, "To get started, edit page.tsx") — anyone landing on
+the bare domain saw a generic template instead of this app.
+
+- [x] **Shared design system** (`src/components/ui.tsx`, new) — `Button`/`LinkButton`
+      (5 variants), `Card`, `Badge` (6 tones), `Alert` (4 tones), `PageHeader`,
+      `Section`, `EmptyState`, plus shared `inputClassName`/`labelClassName`. One
+      definition per pattern instead of N slightly-different copies; every page in the
+      app now uses these instead of ad-hoc Tailwind strings.
+- [x] **Branding wired app-wide, not just the login button** — `globals.css` now
+      defines `--brand-primary`/`--brand-secondary` CSS custom properties (with sane
+      fallbacks pre-login), set per-request from the signed-in institution's colors in
+      `(app)/layout.tsx`, and consumed via `bg-brand-primary`/`text-brand-primary`
+      Tailwind utilities everywhere — every primary button, link hover, focus ring, and
+      the header's accent bar across the whole app now reflect the actual tenant.
+      Required `export const dynamic = "force-dynamic"` on that layout — a plain DB call
+      there (unlike `auth()`'s `cookies()` access) isn't a signal Next.js treats as
+      dynamic on its own, so without this `next build` attempted to statically
+      prerender the shell and run a real Postgres query at build time (breaks whenever
+      Postgres isn't reachable during build — exactly the concern `docs/DEPLOYMENT.md`
+      already raised about production build environments).
+- [x] **Real navigation** (`AppHeader.tsx`, rebuilt) — a proper nav bar (Dashboard,
+      Users, Proctor Queue, Platform Admin — each gated by the same `can()` check its
+      destination page already enforces server-side), a larger/more prominent
+      seal+crest lockup, and a brand-colored bottom accent border.
+- [x] **Root route fixed** — `/` now redirects to `/dashboard` or `/login` instead of
+      rendering the Next.js template.
+- [x] **Every one of the 17 pages** (admin, users, dashboard, course manage/exams/
+      questions, exam builder/grading, attempt taking/grade/review/result, proctor
+      dashboard, login) rebuilt on the shared components — consistent spacing, status
+      colors, card shadows, hover/focus transitions, and a live score display on the
+      student result page instead of a plain sentence. `courses/[courseId]/manage`'s
+      three near-identical roster blocks (Faculty/Proctor/Students) collapsed into one
+      `RosterSection` helper instead of three copy-pasted forms.
+
+  **Verified:** `npm run build` and `npx eslint .` clean throughout. Postgres was
+  unreachable for most of this pass (Docker Desktop's service needs admin rights this
+  session didn't have — the user started it manually partway through) — once it came
+  up: `npm test` (112/112, no regressions from the redesign), `npm run test:e2e` (4/4,
+  twice in a row for stability). One real (non-functional) break the live run caught
+  that grep couldn't: the result page's redesign replaced the old "Score: 1 / 1"
+  sentence with a large score number + a "Final score" label, which broke the e2e
+  test's exact-text regex — the score itself displayed correctly the whole time, only
+  the test's assertion needed updating to match the new (clearer) markup, done in
+  `tests/e2e/exam-lifecycle.spec.ts`. Also fixed along the way: a recurring dev-console
+  image-aspect-ratio warning on the crest logo (Tailwind's `img{height:auto}` reset
+  fighting next/image's explicit dimensions), silenced by adding a matching `h-auto`
+  class. Live screenshots captured via a throwaway Playwright script across all four
+  roles (login, faculty dashboard/question-bank/exam-builder, institution-admin
+  dashboard/users/course-manage, proctor dashboard, student dashboard/exams) confirm the
+  design system, real navigation, and per-institution branding all render correctly
+  against real seeded + live demo data — not just build/lint passing in the abstract.
+
+## Milestone 6.5 — Institution admin gets real proctor authority + reset actions
+
+**Built 2026-08-26**, same day, on direct request: "reset all exams and pending items.
+UPGRADE ADMIN ACCESS and ACTIONS FIRST." The reset itself was a one-off dev-database
+cleanup (every Exam/ExamVersion/ExamQuestion/ExamAttempt/ExamAnswer/AttemptEvent/
+Submission wiped across every institution, `Institution`/`User`/`Course`/
+`CourseFaculty`/`CourseProctor`/`Enrollment`/the question bank all left untouched) — not
+a repeatable feature, so not itself listed below. The "upgrade admin access" half is:
+
+- [x] **Institution admins now have real proctor authority, institution-wide** — not
+      scoped to a `CourseProctor` assignment the way a plain `PROCTOR` is.
+      `exam_attempt: ["read", "approve", "delete"]` added to `INSTITUTION_ADMIN` in
+      `rbac.ts`. `proctoring.ts`'s `scopedCourseIds()` returns `null` (no course
+      filter) for any non-`PROCTOR` role reaching these functions instead of the
+      proctor's assigned-course list — an admin doesn't need (and normally won't have)
+      a `CourseProctor` row of their own. The `/proctor` dashboard and its "Proctor
+      Queue" nav link both now show for `INSTITUTION_ADMIN` too, with a subtitle
+      distinguishing "Scoped to your assigned courses" (PROCTOR) from "Institution-wide
+      oversight" (admin).
+- [x] **`cancelAttempt()`** (new, `proctoring.ts`) — admin-only (`exam_attempt:
+      "delete"`), deletes a booking/attempt outright (events, answers, submission
+      cascade with it) and frees the slot for a fresh booking. Distinct from
+      `resolveIntegrityReview`'s TERMINATE path on purpose: that's a real academic
+      decision that keeps the record; this is cleanup for a stuck/wrong/test attempt
+      that erases it. Wired as a "Cancel" button on every row of the proctor
+      dashboard's three queues, admin-only.
+- [x] **Admin can force-delete a non-draft exam** — `deleteExam()` in `exams.ts` still
+      refuses a non-DRAFT delete for a plain `exam:"delete"` holder (FACULTY, including
+      an admin acting through the FACULTY-permission merge, would be wrong to trust
+      here) but now checks for `exam_attempt:"delete"` specifically and, if present,
+      cascades every attempt/answer/event/submission along with the exam in one
+      `$transaction`. Surfaced as a red "Danger zone (admin only)" card on the exam
+      builder page, separate from the existing DRAFT-only delete section, with copy
+      that's explicit this is for cleaning up test/demo data, not a real academic
+      record.
+
+  **Verified:** `npm test` (116/116 — added coverage in `proctoring.test.ts` for
+  institution-wide queue visibility and `approveProctorStart`/`verifySubmission`
+  working with zero `CourseProctor` rows, `cancelAttempt` succeeding for admin and
+  throwing `ForbiddenError` for FACULTY, and the freed slot accepting a fresh booking;
+  `exams.test.ts` for `deleteExam` cascading a real attempt for admin while still
+  refusing FACULTY on the same published exam; `rbac.test.ts` for the two new
+  permissions), `npm run build` and `npx eslint .` clean, `npx playwright test` 4/4.
+  Live screenshots confirm the "Proctor Queue" nav link and the institution-wide-scoped
+  empty dashboard render correctly for `admin@cmlaw.demo`.
+
+## Milestone 6.6 — "Assigned courses only" was a UX filter, not a boundary (fixed)
+
+**Found and fixed 2026-08-26**, while scoping the sections/batches feature request
+below — re-reading `listCoursesForUser`'s own docstring ("This is a UX/relevance
+filter, not an authorization boundary") made it worth actually checking whether that
+was still just a documented, deliberate scope decision or a real gap. It was a real
+gap: any `FACULTY` account could open `/courses/<any-course-id>/exams` for a course
+they don't teach — just by knowing or guessing its id — and both view *and create*
+exam/question content there, because every course-scoped and exam-scoped page/action
+only ever checked role-level `exam:`/`question:` permissions (shared by every `FACULTY`
+user in the institution), never whether *this* faculty member is actually assigned to
+*this* course.
+
+- [x] **`assertFacultyAssignedToCourse()`** (new, `courses.ts`) — the real enforcement.
+      No-ops for every role except `FACULTY` (institution admins, via the
+      Milestone-5.5 permission merge, and any other role that reaches course content
+      are institution-wide by design, same reasoning as `proctoring.ts`'s
+      `hasInstitutionWideAuthority`). Throws `CourseAccessDeniedError` for a `FACULTY`
+      actor with no matching `CourseFaculty` row.
+- [x] **Wired into every course-scoped and exam-scoped mutation and read path**:
+      `listExamsForCourse`, `getExam`, `createExam`, `addExamQuestion`,
+      `addExamQuestions`, `updateExam`, `removeExamQuestion`, `deleteExam`,
+      `publishExam` (all `exams.ts`), `listQuestionsForCourse`, `createQuestion`,
+      `updateQuestion`, `deleteQuestion` (all `questions.ts`) — not just the entry
+      pages, so a direct server-action call (bypassing a page's own GET render) is
+      refused too, not only a page-load redirect.
+  - Every real call site already passed the full `session.user` object (which
+    includes `id`), so no page changed — this was purely a `lib/*.ts` fix. Test
+    fixtures across six files needed a `CourseFaculty` row added for their faculty
+    actor, since the tests exercise these functions directly and had never modeled
+    that assignment before (there was no reason to, until it started being checked).
+
+  **Verified:** `npm test` (118/118 — added two new regression tests, in `exams.test.ts`
+  and `questions.test.ts`, that create a second faculty account deliberately left
+  unassigned to the course and confirm every listed function above throws
+  `CourseAccessDeniedError` for it, while the assigned faculty account is unaffected),
+  `npm run build` and `npx eslint .` clean, `npx playwright test` 4/4 (the seeded demo
+  faculty account is assigned to LAW101 in `prisma/seed.ts`, so the existing golden-path
+  flows are unaffected by the fix).
+
 ---
+
+## Milestone 6.7 — Course-home page (roster + grading rollup) and the audit log viewer
+
+**Built 2026-08-26**, the two unambiguous items from the faculty-management
+improvement request: "once a course is opened, it should show sections/batches
+(roster), pending grading, and exam results" — plus admin visibility into the
+`AuditLog` table that `auth.ts` had been writing to since Milestone 5.5 with no
+read path anywhere in the app.
+
+- [x] **Course-home page** (`app/(app)/courses/[courseId]/page.tsx`, new route) —
+      `FACULTY`/`INSTITUTION_ADMIN` only (students still land on their own
+      course-exams list, proctors/platform roles keep their own landing pages).
+      Three sections: a faculty/proctor summary line, a student roster table
+      (`getCourseWithRoster`), and a per-exam grading rollup (`submitted` /
+      `pending` / `graded` / `terminated` counts plus a class average once
+      graded) with a "Grade now" shortcut when anything is pending.
+  - **`getCourseExamSummaries()`** (new, `grading.ts`) — the rollup query.
+    Reuses `assertFacultyAssignedToCourse` (Milestone 6.6) since this is a
+    second entry point into course grading data, not just `/exams/[id]/grading`'s
+    own already-guarded path.
+  - Dashboard's `courseLinkPath` now sends `FACULTY`/`INSTITUTION_ADMIN` here
+    instead of straight to `/questions` or `/manage`; `/manage`'s own roster-CRUD
+    page is unchanged and still reachable from the course-home page's subtitle
+    for admins (`course:"update"` gate, so `FACULTY` correctly doesn't see it).
+- [x] **Audit log viewer** (`/audit`, new route + `listAuditLog()` in `audit.ts`) —
+      gated by the `audit_log:"read"` permission that already existed in
+      `rbac.ts` (`SUPER_ADMIN`/`PLATFORM_ADMIN`/`INSTITUTION_ADMIN`) but had no
+      UI. Tenant-scoped via `forTenant()` — rows with a null `institutionId`
+      (e.g. a failed login before the tenant was resolved) are correctly
+      excluded, they never belonged to this tenant. Filterable by result
+      (`SUCCESS`/`DENIED`/`ERROR`) and by action prefix. Nav link added to
+      `AppHeader.tsx` alongside Users/Proctor Queue.
+
+  **Verified:** `npm test` (124/124, including new `grading.test.ts` and
+  `audit.test.ts` covering the course-assignment guard, the pending→graded
+  transition and average-score math, tenant scoping, and the result/action
+  filters), `npx tsc --noEmit`, `npx eslint .`, and `npm run build` all clean
+  (`/courses/[courseId]` and `/audit` both compile as new routes). Live-checked
+  against the dev server's real accumulated demo/e2e data (not just fixtures):
+  `faculty@cmlaw.demo` on `/courses/<LAW101 id>` correctly shows its 2 enrolled
+  students and both exams' real `1 submitted · 1 graded · avg 100%` figures, the
+  "Manage roster" link is present for `admin@cmlaw.demo` and absent for faculty,
+  and `admin@cmlaw.demo` on `/audit?result=DENIED` correctly filters 194 events
+  down to the 10 real `bad_password` denials logged during this session's testing.
+  `npx playwright test` caught the one real fallout of the dashboard routing
+  change: 3 of 4 e2e specs clicked "LAW101" and asserted an immediate landing on
+  `/questions`, which is no longer true for `FACULTY` now that course-home is the
+  landing page — fixed by updating `exam-lifecycle.spec.ts` and
+  `question-import.spec.ts` to assert the course-home URL first, then click
+  through "Question bank" (this is a test-assertion update for an intentional
+  routing change, not an app bug). 4/4 passing after the fix.
+
+---
+
+## Milestone 6.8 — Roster CSV import + roster tables (ADMIN request)
+
+**Built 2026-08-26.** Two admin-facing asks: bulk-assign a course roster from a
+CSV instead of one dropdown-select at a time, and make the roster lists on
+`/courses/[courseId]/manage` look like organized tables instead of stacked
+cards.
+
+- [x] **`roster-import.ts`** (new) — `parseRosterCsv()` (pure, unit-tested)
+      validates `email,role` rows (role must be `FACULTY` or `STUDENT`, no
+      duplicate email+role pairs); `importRosterFromCsv()` resolves every
+      email against an *existing* account of the matching role and only
+      writes if every row resolves — same all-or-nothing contract as
+      `importQuestionsFromCsv`. Deliberately does not create accounts from
+      the CSV: that would mean choosing/distributing a password, which stays
+      the `/users` page's job, not a side effect of a roster upload — an
+      unknown email is a row error ("No FACULTY account found for …"), not a
+      silent skip or an auto-created account.
+  - Wired into `/courses/[courseId]/manage` as a new "Import roster from
+    CSV" section, with a downloadable `course-roster-template.csv`, above
+    the existing per-role assign/unassign controls (which are unchanged and
+    still work — the CSV is a bulk shortcut, not a replacement).
+- [x] **Roster tables** — `RosterSection`'s member list (previously a
+      `<ul>` of cards) is now a real `<table>` (Name / Email / Remove
+      columns), matching the table pattern established on the course-home
+      page (Milestone 6.7). Same component, same props — just the internal
+      markup, so Faculty/Proctors/Students all got the change at once.
+
+  **Verified (first pass, existing-accounts-only):** `npm test` (135/135),
+  clean typecheck/lint/build, `npx playwright test` 6/6. Live-checked
+  in-browser as `admin@cmlaw.demo` on LAW101's manage page: both roster
+  tables render with real data, the CSV import section and template link are
+  present, and existing assign/remove actions on the table rows still work.
+
+  **Revised same day** after the admin tested it with a real 57-row roster
+  of people with no accounts yet — it correctly refused (existing-accounts-
+  only was the original design), but the admin's actual intent was bulk
+  *onboarding*, not just bulk-assigning pre-existing accounts. Confirmed via
+  `AskUserQuestion` before changing behavior (this is exactly the kind of
+  account-creation/credential-security fork that shouldn't be decided
+  unilaterally): **yes, auto-create missing accounts with a generated temp
+  password, shown once.**
+  - `importRosterFromCsv` now resolves each row three ways: existing account
+    of the matching role → attach; email already registered under a
+    *different* role or a *different institution* → still a hard row error
+    (roster CSV never reassigns a role or moves a tenant); unknown email →
+    create a new account (name from an optional CSV `name` column, or
+    derived from the email's local part — "tatum.davis" → "Tatum Davis")
+    with `generateTempPassword()` (new, `password.ts` — a 12-char generator
+    avoiding visually ambiguous characters).
+  - Temp passwords are **never persisted in plaintext or logged** — only
+    the bcrypt hash goes to the database. The plaintext lives only in a
+    process-local, read-once in-memory stash (`consumeCreatedCredentials`,
+    10-minute TTL) keyed by a random token that travels through the
+    redirect URL — the passwords themselves never do. The manage page reads
+    the token once, renders the new accounts + temp passwords in an amber
+    "shown once" table with a CSV download, and a page refresh cannot bring
+    it back. This is honestly a single-process, single-instance mechanism
+    (documented as such in the code) — adequate for this project's current
+    Phase 1 deployment shape, not a general-purpose secrets vault.
+  - Still all-or-nothing: a bad row anywhere in the batch (including one
+    that would've created a brand-new account) means nothing is written —
+    no orphaned accounts from a partially-failed import.
+
+  **Verified (revised behavior):** `npm test` (139/139 — rewrote
+  `roster-import.test.ts`'s DB suite for the three-way resolution, added
+  coverage for temp-password creation + hash verification, the derived vs.
+  explicit name, the one-time read-once contract on
+  `consumeCreatedCredentials`, all-or-nothing across a mixed
+  create-plus-conflict batch, and the cross-institution-email refusal),
+  `npx tsc --noEmit`, `npx eslint .`, `npm run build` clean, and
+  `npx playwright test` 7/7 (rewrote `roster-import.spec.ts`'s error-path
+  spec into a real account-creation spec that also confirms the credentials
+  table disappears on reload — the read-once contract — using a real
+  browser since file upload can't be driven by the Browser pane tool).
+
+  **Also this pass:** the "Question bank · Exams · Manage roster" page-header
+  links across all four course pages (course-home, manage, exams, questions)
+  were plain underlined text — upgraded to real secondary-variant buttons
+  via `PageHeader`'s existing `actions` slot, per direct admin feedback on a
+  screenshot. Verified via computed-style check in the live browser (real
+  border/background/padding, not just link-colored text).
+
+## Milestone 6.9 — Every clickable action is a visible button
+
+**Built 2026-08-26**, admin follow-up: "make all clickable buttons visible."
+Swept the whole app (`grep -rn "underline-offset-2"`) for every action still
+styled as plain underlined text instead of real button chrome, across
+`manage`, `questions`, `exams/[examId]`, `users`, and `audit` pages:
+
+- Table-row **Remove**/**Delete** actions → `Button variant="danger"` (small,
+  `px-2.5 py-1 text-xs` to fit the row).
+- **Edit** (question bank) → `LinkButton variant="secondary"`.
+- **Deactivate/Activate**/**Reset password** (Users page) → `Button`.
+- Every **"Download the template"** CSV-import link → moved out of the
+  description prose into its own `LinkButton` inside the card, above the
+  file picker (roster import, question bank import, exam-CSV import) — the
+  description text no longer carries a link at all, just the explanation.
+- **"Download as CSV"** (new-account credentials) → `LinkButton`.
+- Inline prose links inside empty-state messages ("add one first", "add
+  some on the question bank page") → restructured into a short sentence
+  plus an adjacent small `LinkButton`, rather than a link embedded mid-
+  sentence.
+- Course-home's exam-card title (`/courses/[courseId]/page.tsx`) was a bare
+  `<a>` — replaced with a plain (non-link) title plus an explicit **"View
+  exam"** button, alongside **"Grade now"** when grading is pending.
+- **Apply** (audit log filter form) was a hand-rolled `<button>` with
+  button-shaped classes already — switched to the shared `Button` component
+  for consistency, no visual change.
+
+Deliberately left alone: `PageHeader`'s "← Back" link (universal back-nav
+convention), whole-card list links on the dashboard and course-exams pages
+(already visually interactive via `Card interactive`'s hover shadow, and
+wrapping them in a button would be redundant with the "View exam" pattern
+above), the branding logo link, and the exam-taking UI's `Calculator` /
+`Notepad` / question-pager controls in `ExamToolbar.tsx` /
+`ExamQuestionPager.tsx` — those were already real button-styled chrome
+(bordered, shadowed), just not routed through the shared component, and
+sit inside the anti-cheat/exam-taking surface this project treats as
+higher-risk to touch for a cosmetic-only reason (see `CLAUDE.md`'s
+Autonomy Guardrails exclusion list).
+
+**Verified:** post-sweep `grep -rn "underline-offset-2"` returns zero
+matches. `npm test` (139/139, unaffected — this was UI-only), `npx tsc
+--noEmit`, `npx eslint .`, `npm run build` all clean, `npx playwright test`
+7/7 (confirms the CSV-import specs' `text=` selectors for template
+links/buttons still resolve correctly after the markup changes).
+
+---
+
+## Milestone 7 — Friendlier design system: tactile buttons, real loading states, softer everything
+
+**Built 2026-08-26**, on explicit admin direction to make the whole app feel
+"friendly, approachable, and seamless." Rather than hand-editing 17 pages
+individually, this went through the shared design-system layer that 20 of
+the app's 26 page/component files already compose from
+(`src/components/ui.tsx`) — one systemic change instead of thirty scattered
+ones, which also kept the diff small enough to verify with confidence
+against the existing 139-test unit suite and 7-spec e2e suite.
+
+- [x] **`Button.tsx`** (new, split out of `ui.tsx` as a client component) —
+      the one primitive that actually needed client JS. Wires `react-dom`'s
+      `useFormStatus` (React 19) so **every `type="submit"` Button
+      auto-shows a spinner and disables itself while its form is
+      in-flight**, with zero per-page wiring — every server action in this
+      app is a plain `<form action={...}>`, so this covers all of them at
+      once. Verified safe against the exam-taking UI's `type="button"`
+      instances (`ExamEntryGate`, `ExamQuestionPager`) — `useFormStatus` is
+      a documented no-op outside a `<form>`, and the spinner only gates on
+      `type === "submit"` regardless.
+- [x] **`button-styles.ts`** (new) — `BUTTON_BASE`/`BUTTON_VARIANTS` moved
+      here so both `Button.tsx` (client) and `ui.tsx`'s `LinkButton`
+      (server-safe, plain navigation) share one definition without forcing
+      `LinkButton` into the client bundle too.
+- [x] **Tactile feedback across the board**: `active:scale-[0.97]` press
+      depth, `transition-all duration-200 ease-in-out` everywhere (was
+      `transition-colors duration-150`, color-only), `hover:shadow-md` +
+      `hover:-translate-y-0.5` lift on interactive Cards, `rounded-xl`
+      buttons/inputs and `rounded-2xl` Cards (was `rounded-lg`/`rounded-xl`).
+- [x] **One global focus ring** (`globals.css`) — replaced the plain
+      `outline: 2px solid` with a box-shadow ring (inner shadow matched to
+      the page background standing in for `ring-offset`, so it follows each
+      element's own border-radius instead of squaring it off). Deliberately
+      global rather than per-component Tailwind classes: it's the only way
+      to correctly cover the app's whole-card `<a>` wrappers (dashboard,
+      course-exams list) that aren't built from a shared component, without
+      risking a doubled-up ring on the ones that are.
+- [x] **`Alert`** fades/slides in on mount (`animate-fade-in`, `transform` +
+      `opacity` only — compositor-only, never triggers layout thrashing;
+      respects `prefers-reduced-motion`).
+- [x] **`EmptyState`** gets an icon accent (inline SVG, no new dependency)
+      in a soft circular badge instead of being a bare paragraph — reads as
+      an intentional empty state, not a broken page.
+- [x] Body `line-height` bumped to 1.6 for readability.
+
+**Deliberately not done this pass** (flagged rather than rushed):
+a full slate→warm-neutral gray palette swap (hundreds of scattered
+`text-slate-*`/`bg-slate-*` occurrences, no single leverage point — a mass
+find-replace here is a real regression risk for a cosmetic-only payoff, and
+belongs as a separate reviewable pass) and exhaustive per-page 44x44px
+touch-target auditing (the *shared* buttons/inputs are close — `py-2.5`
+puts most at ~42px — but literally every element across 17 pages wasn't
+individually re-measured).
+
+**Verified:** `npx tsc --noEmit`, `npx eslint .`, `npm run build` all clean
+(Button's new client boundary doesn't break any route). `npm test`
+(139/139, unaffected — UI-only). `npx playwright test` 7/7 — one transient
+timeout on a shared/contended dev server under 3 parallel workers, which
+reproduced as a clean pass both in isolation and in a subsequent full
+3-worker run, confirming it was resource contention, not a design-system
+regression. Live-checked computed styles in-browser:
+`getComputedStyle().borderRadius` reads 16px on Cards (`rounded-2xl`) and
+12px on Buttons (`rounded-xl`), `transitionDuration` reads `0.2s` with
+`transitionProperty: all` on both, matching the new tokens exactly.
+
+---
+
 
 ## Explicitly deferred (documented, not built, not simulated)
 

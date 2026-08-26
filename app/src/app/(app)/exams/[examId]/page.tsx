@@ -18,6 +18,7 @@ import { listQuestionsForCourse } from "@/lib/questions";
 import { importQuestionsFromCsv, QuestionImportValidationError } from "@/lib/question-import";
 import { bookAttempt, findAttemptForStudent, ScheduledTimeOutOfWindowError } from "@/lib/attempts";
 import { beginAttemptAction, checkProctorApprovalAction, requestProctorApprovalAction } from "./actions";
+import { Alert, Badge, Button, Card, EmptyState, LinkButton, PageHeader, Section, inputClassName, labelClassName } from "@/components/ui";
 
 function formatWindow(from: Date | null, until: Date | null): string | null {
   if (!from && !until) return null;
@@ -91,34 +92,25 @@ export default async function ExamBuilderPage({
     }
 
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-        <div>
-          <a href={`/courses/${exam.courseId}/exams`} className="text-sm text-gray-500">
-            ← Exams
-          </a>
-          <h1 className="text-xl font-semibold">{exam.title}</h1>
-          {version && (
-            <p className="text-sm text-gray-500">
-              {version.timeLimitMinutes} minutes · {version.examQuestions.length} question(s)
-            </p>
-          )}
-        </div>
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
+        <PageHeader
+          backHref={`/courses/${exam.courseId}/exams`}
+          backLabel="Exams"
+          title={exam.title}
+          subtitle={version && `${version.timeLimitMinutes} minutes · ${version.examQuestions.length} question(s)`}
+        />
 
-        {bookingError && (
-          <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
-            {bookingError}
-          </p>
-        )}
+        {bookingError && <Alert tone="error">{bookingError}</Alert>}
 
         {!myAttempt && (
-          <div className="flex flex-col gap-4 rounded border p-4">
+          <Card className="flex flex-col gap-4">
             <div>
-              <h2 className="mb-2 font-medium">Book This Exam</h2>
-              <p className="text-sm text-gray-500">Available: {windowLabel ?? "No fixed window — book anytime"}</p>
+              <h2 className="mb-1 text-base font-semibold text-slate-900">Book This Exam</h2>
+              <p className="text-sm text-slate-500">Available: {windowLabel ?? "No fixed window — book anytime"}</p>
             </div>
             <form action={confirmBookingAction} className="flex flex-col gap-3">
               {hasWindow && (
-                <label className="flex flex-col gap-1 text-sm">
+                <label className={labelClassName}>
                   Pick a time within the window
                   <input
                     name="scheduledFor"
@@ -126,15 +118,15 @@ export default async function ExamBuilderPage({
                     required
                     min={version?.availableFrom ? toDatetimeLocalValue(version.availableFrom) : undefined}
                     max={version?.availableUntil ? toDatetimeLocalValue(version.availableUntil) : undefined}
-                    className="rounded border px-3 py-2"
+                    className={inputClassName}
                   />
                 </label>
               )}
-              <button type="submit" className="self-start rounded bg-black px-3 py-2 text-white">
+              <Button type="submit" className="self-start">
                 Confirm Booking
-              </button>
+              </Button>
             </form>
-          </div>
+          </Card>
         )}
         {myAttempt?.status === "NOT_STARTED" && (
           <ExamEntryGate
@@ -149,19 +141,15 @@ export default async function ExamBuilderPage({
           />
         )}
         {myAttempt?.status === "IN_PROGRESS" && (
-          <a href={`/attempts/${myAttempt.id}`} className="rounded bg-black px-3 py-2 text-center text-white">
+          <LinkButton href={`/attempts/${myAttempt.id}`} className="justify-center">
             Continue Exam
-          </a>
+          </LinkButton>
         )}
-        {myAttempt?.status === "INTERRUPTED" && (
-          <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
-            Your exam is paused pending faculty review.
-          </p>
-        )}
+        {myAttempt?.status === "INTERRUPTED" && <Alert tone="warning">Your exam is paused pending faculty review.</Alert>}
         {(myAttempt?.status === "SUBMITTED" || myAttempt?.status === "GRADED" || myAttempt?.status === "TERMINATED") && (
-          <a href={`/attempts/${myAttempt.id}/result`} className="rounded border px-3 py-2 text-center">
+          <LinkButton href={`/attempts/${myAttempt.id}/result`} variant="secondary" className="justify-center">
             View Result
-          </a>
+          </LinkButton>
         )}
       </main>
     );
@@ -170,6 +158,12 @@ export default async function ExamBuilderPage({
   const canEdit = can(session.user.role, "exam", "update") && isDraft;
   const canPublish = can(session.user.role, "exam", "publish") && isDraft;
   const canDelete = can(session.user.role, "exam", "delete") && isDraft;
+  // Admin-only (exam_attempt:"delete" — rbac.ts): force-delete a PUBLISHED
+  // exam too, cascading every attempt/answer/event/submission with it. Kept
+  // separate from canDelete above so FACULTY (who shares exam:"delete")
+  // never gets this — deleteExam() itself also enforces this, this is only
+  // the UI gate.
+  const canForceDelete = !isDraft && can(session.user.role, "exam_attempt", "delete");
 
   const availableQuestions = canEdit
     ? await listQuestionsForCourse(institutionId, session.user, exam.courseId)
@@ -308,220 +302,225 @@ export default async function ExamBuilderPage({
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <a href={`/courses/${exam.courseId}/exams`} className="text-sm text-gray-500">
-          ← Exams
-        </a>
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl font-semibold">{exam.title}</h1>
-          <span
-            className={
-              "rounded px-2 py-0.5 text-xs " +
-              (exam.status === "PUBLISHED" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700")
-            }
-          >
-            {exam.status}
-          </span>
-        </div>
-        {version && <p className="text-sm text-gray-500">{version.timeLimitMinutes} minutes</p>}
-        {can(session.user.role, "grade", "read") && exam.status === "PUBLISHED" && (
-          <a href={`/exams/${examId}/grading`} className="text-sm underline">
-            Grading
-          </a>
-        )}
-      </div>
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 p-6">
+      <PageHeader
+        backHref={`/courses/${exam.courseId}/exams`}
+        backLabel="Exams"
+        title={exam.title}
+        badge={<Badge tone={exam.status === "PUBLISHED" ? "green" : "gray"}>{exam.status}</Badge>}
+        subtitle={version && `${version.timeLimitMinutes} minutes`}
+        actions={
+          can(session.user.role, "grade", "read") &&
+          exam.status === "PUBLISHED" && (
+            <LinkButton href={`/exams/${examId}/grading`} variant="secondary">
+              Grading
+            </LinkButton>
+          )
+        }
+      />
 
-      {imported && (
-        <p className="rounded bg-green-100 p-2 text-sm text-green-800">
-          Imported and attached {imported} question(s) to this exam.
-        </p>
-      )}
-      {importError && (
-        <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
-          Import failed — nothing was added: {importError}
-        </p>
-      )}
-      {bulkError && (
-        <p role="alert" className="rounded bg-red-100 p-2 text-sm text-red-700">
-          Couldn&apos;t add the selected questions: {bulkError}
-        </p>
-      )}
+      {imported && <Alert tone="success">Imported and attached {imported} question(s) to this exam.</Alert>}
+      {importError && <Alert tone="error">Import failed — nothing was added: {importError}</Alert>}
+      {bulkError && <Alert tone="error">Couldn&apos;t add the selected questions: {bulkError}</Alert>}
 
       {canEdit && version && (
-        <section className="rounded border p-4">
-          <h2 className="mb-3 font-medium">Exam details</h2>
-          <form action={updateExamAction} className="flex flex-col gap-3">
-            <label className="flex flex-col gap-1 text-sm">
-              Title
-              <input name="title" required defaultValue={exam.title} className="rounded border px-3 py-2" />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Time limit (minutes)
-              <input
-                name="timeLimitMinutes"
-                type="number"
-                defaultValue={version.timeLimitMinutes}
-                className="rounded border px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Available from (optional)
-              <input
-                name="availableFrom"
-                type="datetime-local"
-                defaultValue={version.availableFrom ? toDatetimeLocalValue(version.availableFrom) : undefined}
-                className="rounded border px-3 py-2"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm">
-              Available until (optional)
-              <input
-                name="availableUntil"
-                type="datetime-local"
-                defaultValue={version.availableUntil ? toDatetimeLocalValue(version.availableUntil) : undefined}
-                className="rounded border px-3 py-2"
-              />
-            </label>
-            <button type="submit" className="self-start rounded border px-3 py-2 text-sm">
-              Save changes
-            </button>
-          </form>
-        </section>
+        <Section title="Exam details">
+          <Card>
+            <form action={updateExamAction} className="flex flex-col gap-3">
+              <label className={labelClassName}>
+                Title
+                <input name="title" required defaultValue={exam.title} className={inputClassName} />
+              </label>
+              <label className={labelClassName}>
+                Time limit (minutes)
+                <input
+                  name="timeLimitMinutes"
+                  type="number"
+                  defaultValue={version.timeLimitMinutes}
+                  className={inputClassName}
+                />
+              </label>
+              <label className={labelClassName}>
+                Available from (optional)
+                <input
+                  name="availableFrom"
+                  type="datetime-local"
+                  defaultValue={version.availableFrom ? toDatetimeLocalValue(version.availableFrom) : undefined}
+                  className={inputClassName}
+                />
+              </label>
+              <label className={labelClassName}>
+                Available until (optional)
+                <input
+                  name="availableUntil"
+                  type="datetime-local"
+                  defaultValue={version.availableUntil ? toDatetimeLocalValue(version.availableUntil) : undefined}
+                  className={inputClassName}
+                />
+              </label>
+              <Button type="submit" variant="secondary" className="self-start">
+                Save changes
+              </Button>
+            </form>
+          </Card>
+        </Section>
       )}
 
-      <section className="flex flex-col gap-2">
-        <h2 className="font-medium">
-          Questions ({version?.examQuestions.length ?? 0})
-          {version && version.examQuestions.length > 0 && (
-            <span className="ml-2 font-normal text-gray-500">
-              · {version.examQuestions.reduce((sum, eq) => sum + eq.points, 0)} pt(s) total
-            </span>
-          )}
-        </h2>
-        {(!version || version.examQuestions.length === 0) && (
-          <p className="text-sm text-gray-500">No questions added yet.</p>
-        )}
-        {version?.examQuestions.map((eq) => (
-          <div key={eq.id} className="rounded border p-3 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="font-medium">Q{eq.order + 1}</span>
-              <span className="flex items-center gap-2">
-                <span className="text-gray-500">{eq.points} pt(s)</span>
-                {canEdit && (
-                  <form action={removeQuestionAction}>
-                    <input type="hidden" name="examQuestionId" value={eq.id} />
-                    <button type="submit" className="text-xs text-red-700 underline">
-                      Remove
-                    </button>
-                  </form>
-                )}
+      <Section
+        title={
+          <>
+            Questions ({version?.examQuestions.length ?? 0})
+            {version && version.examQuestions.length > 0 && (
+              <span className="ml-2 font-normal text-slate-500">
+                · {version.examQuestions.reduce((sum, eq) => sum + eq.points, 0)} pt(s) total
               </span>
-            </div>
-            <p className="mt-1">{eq.questionVersion.prompt}</p>
-          </div>
-        ))}
-      </section>
+            )}
+          </>
+        }
+      >
+        {(!version || version.examQuestions.length === 0) && <EmptyState>No questions added yet.</EmptyState>}
+        <div className="flex flex-col gap-2">
+          {version?.examQuestions.map((eq) => (
+            <Card key={eq.id} className="text-sm">
+              <div className="flex items-center justify-between">
+                <span className="font-medium text-slate-900">Q{eq.order + 1}</span>
+                <span className="flex items-center gap-3">
+                  <span className="text-slate-500">{eq.points} pt(s)</span>
+                  {canEdit && (
+                    <form action={removeQuestionAction}>
+                      <input type="hidden" name="examQuestionId" value={eq.id} />
+                      <Button type="submit" variant="danger" className="px-2.5 py-1 text-xs">
+                        Remove
+                      </Button>
+                    </form>
+                  )}
+                </span>
+              </div>
+              <p className="mt-1 text-slate-700">{eq.questionVersion.prompt}</p>
+            </Card>
+          ))}
+        </div>
+      </Section>
 
       {canEdit && (
         <>
-          <section className="rounded border p-4">
-            <h2 className="mb-3 font-medium">Import from CSV directly into this exam</h2>
-            <p className="mb-3 text-xs text-gray-500">
-              Creates the questions in the course&apos;s reusable bank <em>and</em> attaches all of them to this exam
-              in one step. All-or-nothing, same as the question bank&apos;s import.{" "}
-              <a href="/templates/question-bank-template.csv" download className="underline">
+          <Section
+            title="Import from CSV directly into this exam"
+            description="Creates the questions in the course's reusable bank and attaches all of them to this exam in one step. All-or-nothing, same as the question bank's import."
+          >
+            <Card className="flex flex-col gap-3">
+              <LinkButton href="/templates/question-bank-template.csv" download variant="secondary" className="self-start">
                 Download the template
-              </a>
-              .
-            </p>
-            <form action={importCsvIntoExamAction} className="flex items-center gap-2">
-              <input name="file" type="file" accept=".csv,text/csv" required className="flex-1 text-sm" />
-              <button type="submit" className="rounded border px-3 py-2 text-sm">
-                Import into exam
-              </button>
-            </form>
-          </section>
+              </LinkButton>
+              <form action={importCsvIntoExamAction} className="flex items-center gap-2">
+                <input name="file" type="file" accept=".csv,text/csv" required className="flex-1 text-sm" />
+                <Button type="submit" variant="secondary">
+                  Import into exam
+                </Button>
+              </form>
+            </Card>
+          </Section>
 
           {unusedQuestions.length > 0 && (
-            <section className="rounded border p-4">
-              <h2 className="mb-3 font-medium">Add multiple questions from the bank at once</h2>
-              <form action={addSelectedQuestionsAction} className="flex flex-col gap-2">
-                <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
-                  {unusedQuestions.map((q) => (
-                    <label key={q.id} className="flex items-start gap-2 text-sm">
-                      <input type="checkbox" name="questionIds" value={q.id} className="mt-1" />
-                      <span>
-                        [{q.type}] {q.versions[0]?.prompt.slice(0, 80)} ({q.versions[0]?.points} pt(s) default)
-                      </span>
-                    </label>
-                  ))}
-                </div>
-                <button type="submit" className="self-start rounded bg-black px-3 py-2 text-sm text-white">
-                  Add selected to exam
-                </button>
-                <p className="text-xs text-gray-500">Each question is added at its own default points.</p>
-              </form>
-            </section>
+            <Section title="Add multiple questions from the bank at once">
+              <Card>
+                <form action={addSelectedQuestionsAction} className="flex flex-col gap-2">
+                  <div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
+                    {unusedQuestions.map((q) => (
+                      <label key={q.id} className="flex items-start gap-2 text-sm">
+                        <input type="checkbox" name="questionIds" value={q.id} className="mt-1" />
+                        <span>
+                          [{q.type}] {q.versions[0]?.prompt.slice(0, 80)} ({q.versions[0]?.points} pt(s) default)
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <Button type="submit" className="self-start">
+                    Add selected to exam
+                  </Button>
+                  <p className="text-xs text-slate-500">Each question is added at its own default points.</p>
+                </form>
+              </Card>
+            </Section>
           )}
 
-          <section className="rounded border p-4">
-            <h2 className="mb-3 font-medium">Add one question with custom points</h2>
-            {availableQuestions.length === 0 && (
-              <p className="text-sm text-gray-500">
-                No questions in this course&apos;s bank yet — add some on the{" "}
-                <a href={`/courses/${exam.courseId}/questions`} className="underline">
-                  question bank page
-                </a>{" "}
-                first.
-              </p>
-            )}
-            {availableQuestions.length > 0 && (
-              <form action={addQuestionAction} className="flex flex-col gap-3">
-                <label className="flex flex-col gap-1 text-sm">
-                  Question
-                  <select name="questionId" required className="rounded border px-3 py-2">
-                    {availableQuestions.map((q) => (
-                      <option key={q.id} value={q.id} disabled={usedQuestionIds.has(q.id)}>
-                        [{q.type}] {q.versions[0]?.prompt.slice(0, 60)}
-                        {usedQuestionIds.has(q.id) ? " (already added)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  Points
-                  <input name="points" type="number" step="0.5" defaultValue={1} className="rounded border px-3 py-2" />
-                </label>
-                <button type="submit" className="rounded bg-black px-3 py-2 text-white">
-                  Add to exam
-                </button>
-              </form>
-            )}
-          </section>
+          <Section title="Add one question with custom points">
+            <Card>
+              {availableQuestions.length === 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm text-slate-500">No questions in this course&apos;s bank yet.</p>
+                  <LinkButton href={`/courses/${exam.courseId}/questions`} variant="secondary" className="px-2.5 py-1 text-xs">
+                    Go to question bank
+                  </LinkButton>
+                </div>
+              )}
+              {availableQuestions.length > 0 && (
+                <form action={addQuestionAction} className="flex flex-col gap-3">
+                  <label className={labelClassName}>
+                    Question
+                    <select name="questionId" required className={inputClassName}>
+                      {availableQuestions.map((q) => (
+                        <option key={q.id} value={q.id} disabled={usedQuestionIds.has(q.id)}>
+                          [{q.type}] {q.versions[0]?.prompt.slice(0, 60)}
+                          {usedQuestionIds.has(q.id) ? " (already added)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className={labelClassName}>
+                    Points
+                    <input name="points" type="number" step="0.5" defaultValue={1} className={inputClassName} />
+                  </label>
+                  <Button type="submit" className="self-start">
+                    Add to exam
+                  </Button>
+                </form>
+              )}
+            </Card>
+          </Section>
         </>
       )}
 
       {canPublish && (
-        <form action={publishAction}>
-          <button type="submit" className="rounded bg-green-700 px-3 py-2 text-white">
-            Publish exam
-          </button>
-          <p className="mt-1 text-xs text-gray-500">
-            Freezes this version — no more edits to it once published (Phase 1 has no re-versioning yet).
-          </p>
-        </form>
+        <Card>
+          <form action={publishAction}>
+            <Button type="submit" variant="success">
+              Publish exam
+            </Button>
+            <p className="mt-2 text-xs text-slate-500">
+              Freezes this version — no more edits to it once published (Phase 1 has no re-versioning yet).
+            </p>
+          </form>
+        </Card>
       )}
 
       {canDelete && (
-        <form action={deleteExamAction}>
-          <button type="submit" className="rounded bg-red-700 px-3 py-2 text-sm text-white">
-            Delete exam
-          </button>
-          <p className="mt-1 text-xs text-gray-500">
-            Safe while still a draft — no student can have an attempt against an unpublished exam.
-          </p>
-        </form>
+        <Card>
+          <form action={deleteExamAction}>
+            <Button type="submit" variant="danger">
+              Delete exam
+            </Button>
+            <p className="mt-2 text-xs text-slate-500">
+              Safe while still a draft — no student can have an attempt against an unpublished exam.
+            </p>
+          </form>
+        </Card>
+      )}
+
+      {canForceDelete && (
+        <Card className="border-red-300 bg-red-50">
+          <h2 className="mb-2 text-sm font-semibold text-red-900">Danger zone (admin only)</h2>
+          <form action={deleteExamAction}>
+            <Button type="submit" variant="danger">
+              Force-delete this exam
+            </Button>
+            <p className="mt-2 text-xs text-red-800">
+              This exam has already been published — deleting it also erases every student&apos;s attempt, answers,
+              integrity events, and submission record against it. This cannot be undone. Only use this for cleaning up
+              test/demo data, not a real academic record.
+            </p>
+          </form>
+        </Card>
       )}
     </main>
   );

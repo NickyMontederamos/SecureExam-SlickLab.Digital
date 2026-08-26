@@ -5,6 +5,7 @@ import { auth } from "@/auth";
 import { AttemptNotFoundError, getAttemptForTaking } from "@/lib/attempts";
 import { gradeAnswer } from "@/lib/grading";
 import { can, ForbiddenError } from "@/lib/rbac";
+import { Badge, Button, Card, PageHeader } from "@/components/ui";
 
 type AnswerShape = { choiceIds?: string[]; text?: string };
 
@@ -73,37 +74,38 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div>
-        <a href={`/exams/${attempt.examVersion.exam.id}/grading`} className="text-sm text-gray-500">
-          ← Grading
-        </a>
-        <h1 className="text-xl font-semibold">Grading: {attempt.examVersion.exam.title}</h1>
-        <p className="text-sm text-gray-500">
-          Status: {attempt.status}
-          {pendingCount > 0 && <span className="ml-2 text-amber-700">· {pendingCount} question(s) still pending</span>}
-        </p>
-      </div>
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
+      <PageHeader
+        backHref={`/exams/${attempt.examVersion.exam.id}/grading`}
+        backLabel="Grading"
+        title={`Grading: ${attempt.examVersion.exam.title}`}
+        subtitle={
+          <>
+            Status: {attempt.status}
+            {pendingCount > 0 && <span className="ml-2 text-amber-700">· {pendingCount} question(s) still pending</span>}
+          </>
+        }
+      />
 
-      <section className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
         {attempt.examVersion.examQuestions.map((eq, i) => {
           const answer = answersByQuestion.get(eq.id);
           const responseText = formatResponse(eq.question.type, eq.questionVersion.choices, answer?.responseJson);
           const isManual = eq.question.type === "ESSAY" || eq.question.type === "SHORT_ANSWER";
 
           return (
-            <div key={eq.id} className="rounded border p-3 text-sm">
+            <Card key={eq.id} className="text-sm">
               <div className="flex items-center justify-between">
-                <span className="font-medium">
+                <span className="font-medium text-slate-900">
                   Q{i + 1} · {eq.points} pt(s)
                 </span>
-                {answer?.autoGraded && <span className="text-xs text-gray-500">Auto-graded</span>}
+                {answer?.autoGraded && <Badge>Auto-graded</Badge>}
               </div>
-              <p className="mt-1">{eq.questionVersion.prompt}</p>
-              <p className="mt-1 rounded bg-gray-50 p-2 text-xs">{responseText}</p>
+              <p className="mt-1 text-slate-700">{eq.questionVersion.prompt}</p>
+              <p className="mt-2 rounded-lg bg-slate-50 p-2.5 text-sm text-slate-800">{responseText}</p>
 
               {isManual && canGrade ? (
-                <form action={gradeAction} className="mt-2 flex items-center gap-2">
+                <form action={gradeAction} className="mt-3 flex items-center gap-2">
                   <input type="hidden" name="examAnswerId" value={answer?.id} />
                   <input
                     name="points"
@@ -112,27 +114,27 @@ export default async function GradeAttemptPage({ params }: { params: Promise<{ a
                     min={0}
                     max={eq.points}
                     defaultValue={answer?.pointsAwarded ?? undefined}
-                    className="w-20 rounded border px-2 py-1"
+                    className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-sm"
                   />
-                  <button type="submit" className="rounded bg-black px-3 py-1 text-white">
+                  <Button type="submit" className="px-3 py-1.5 text-xs">
                     Save grade
-                  </button>
+                  </Button>
                 </form>
               ) : isManual ? (
-                <p className="mt-2 text-xs text-gray-500">
+                <p className="mt-2 text-xs text-slate-500">
                   {answer?.pointsAwarded === null || answer?.pointsAwarded === undefined
                     ? "Pending grading (view only — your role can't grade)"
                     : `${answer.pointsAwarded} / ${eq.points} (manually graded)`}
                 </p>
               ) : (
-                <p className="mt-2 text-xs text-gray-500">
+                <p className="mt-2 text-xs text-slate-500">
                   {answer?.pointsAwarded ?? 0} / {eq.points} (auto-graded)
                 </p>
               )}
-            </div>
+            </Card>
           );
         })}
-      </section>
+      </div>
     </main>
   );
 }

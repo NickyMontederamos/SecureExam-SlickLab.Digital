@@ -36,7 +36,7 @@ export function ExamCountdown({
   // Avoids a hydration mismatch: the server has no business computing "time
   // since render" — the real value only exists once this mounts client-side.
   if (remainingMs === null) {
-    return <p className="text-sm text-gray-500">Loading time remaining…</p>;
+    return <p className="text-sm text-slate-500">Loading time remaining…</p>;
   }
 
   const clamped = Math.max(0, remainingMs);
@@ -46,7 +46,10 @@ export function ExamCountdown({
 
   return (
     <p
-      className={`text-sm font-medium tabular-nums ${isLow ? "text-red-600" : "text-gray-500"}`}
+      className={
+        "inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1 text-sm font-medium tabular-nums transition-colors " +
+        (isLow ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-600")
+      }
       role="timer"
       aria-live="polite"
     >

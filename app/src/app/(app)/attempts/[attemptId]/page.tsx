@@ -15,6 +15,7 @@ import {
 } from "@/lib/attempts";
 import { getWarningCount } from "@/lib/integrity";
 import { recordIntegrityEventAction } from "./actions";
+import { Alert, Badge, Button, Card, inputClassName } from "@/components/ui";
 
 type AttemptView = Awaited<ReturnType<typeof getAttemptForTaking>>;
 type ExamQuestionView = AttemptView["examVersion"]["examQuestions"][number];
@@ -82,9 +83,9 @@ function renderInput(eq: ExamQuestionView, existingRow: AnswerRow | undefined) {
     );
   }
   if (eq.question.type === "SHORT_ANSWER") {
-    return <input name={name} defaultValue={existing?.text ?? ""} className="w-full rounded border px-3 py-2 text-sm" />;
+    return <input name={name} defaultValue={existing?.text ?? ""} className={`w-full ${inputClassName}`} />;
   }
-  return <textarea name={name} defaultValue={existing?.text ?? ""} rows={4} className="w-full rounded border px-3 py-2 text-sm" />;
+  return <textarea name={name} defaultValue={existing?.text ?? ""} rows={4} className={`w-full ${inputClassName}`} />;
 }
 
 export default async function TakeExamPage({ params }: { params: Promise<{ attemptId: string }> }) {
@@ -111,12 +112,12 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
 
   if (attempt.status === "INTERRUPTED") {
     return (
-      <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-        <h1 className="text-xl font-semibold">{attempt.examVersion.exam.title}</h1>
-        <p className="rounded border border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+      <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
+        <h1 className="text-xl font-semibold text-slate-900">{attempt.examVersion.exam.title}</h1>
+        <Alert tone="warning">
           Your exam was paused after repeated warnings (leaving the window or exiting fullscreen). A faculty member
           will review your session — you&apos;ll be notified once it&apos;s resolved. Your answers so far are saved.
-        </p>
+        </Alert>
       </main>
     );
   }
@@ -175,9 +176,9 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col gap-6 p-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-xl font-semibold">{attempt.examVersion.exam.title}</h1>
+    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 p-6">
+      <div className="flex flex-col gap-2 border-b border-slate-200 pb-4">
+        <h1 className="text-xl font-semibold text-slate-900">{attempt.examVersion.exam.title}</h1>
         <ExamCountdown deadlineEpochMs={deadlineEpochMs} submitButtonId={SUBMIT_BUTTON_ID} />
         <IntegrityMonitor attemptId={attemptId} initialWarningCount={warningCount} recordEventAction={recordIntegrityEventAction} />
       </div>
@@ -187,33 +188,31 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
           {attempt.examVersion.examQuestions.map((eq, index) => {
             const existingRow = answersByQuestion.get(eq.id);
             return (
-              <fieldset key={eq.id} className="rounded border p-3">
-                <legend className="flex items-center gap-2 px-1 text-sm font-medium">
+              <Card key={eq.id} as="fieldset">
+                <legend className="mb-2 flex items-center gap-2 px-1 text-sm font-medium text-slate-900">
                   <span>
                     Q{index + 1} · {eq.points} pt(s)
                   </span>
-                  {existingRow?.isFlagged && (
-                    <span className="rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-800">Flagged</span>
-                  )}
+                  {existingRow?.isFlagged && <Badge tone="amber">Flagged</Badge>}
                 </legend>
-                <p className="mb-2 text-sm">{eq.questionVersion.prompt}</p>
+                <p className="mb-2 text-sm text-slate-700">{eq.questionVersion.prompt}</p>
                 {renderInput(eq, existingRow)}
-                <label className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                <label className="mt-3 flex items-center gap-2 text-xs text-slate-500">
                   <input type="checkbox" name={`flag_${eq.id}`} defaultChecked={existingRow?.isFlagged ?? false} />
                   Flag this question to review before submitting
                 </label>
-              </fieldset>
+              </Card>
             );
           })}
         </ExamQuestionPager>
 
         <div className="flex gap-3">
-          <button type="submit" className="rounded border px-3 py-2">
+          <Button type="submit" variant="secondary">
             Save Progress
-          </button>
-          <button id={SUBMIT_BUTTON_ID} formAction={submitExamAction} className="rounded bg-black px-3 py-2 text-white">
+          </Button>
+          <Button id={SUBMIT_BUTTON_ID} formAction={submitExamAction}>
             Submit Exam
-          </button>
+          </Button>
         </div>
       </form>
 

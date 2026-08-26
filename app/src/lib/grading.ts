@@ -2,6 +2,7 @@ import type { Role } from "@prisma/client";
 import { assertCan } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { ExamNotFoundError } from "./exams";
+import { assertFacultyAssignedToCourse } from "./courses";
 
 export class AnswerNotFoundError extends Error {
   constructor(answerId: string) {
@@ -33,6 +34,81 @@ export async function listAttemptsForExam(institutionId: string, actor: { role: 
     where: { examVersionId: version.id, status: { in: ["SUBMITTED", "GRADED", "TERMINATED"] } },
     include: { student: true, answers: true },
     orderBy: { submittedAt: "asc" },
+  });
+}
+
+export interface CourseExamSummary {
+  examId: string;
+  title: string;
+  status: string;
+  submittedCount: number;
+  pendingCount: number;
+  gradedCount: number;
+  terminatedCount: number;
+  averageScorePercent: number | null;
+}
+
+/**
+ * Per-exam grading rollup for the course-home page: how many attempts are
+ * awaiting grading vs. already graded, and the class average once graded.
+ * Uses the same course-assignment guard as everything else in Milestone
+ * 6.6 — this is reached from the course-home page, not just from an
+ * exam's own grading queue, so it needs its own check rather than relying
+ * on the caller already having passed one.
+ */
+export async function getCourseExamSummaries(
+  institutionId: string,
+  actor: { id: string; role: Role },
+  courseId: string
+): Promise<CourseExamSummary[]> {
+  assertCan(actor.role, "grade", "read");
+  await assertFacultyAssignedToCourse(institutionId, actor, courseId);
+
+  const db = forTenant(institutionId);
+  const exams = await db.exam.findMany({
+    where: { courseId },
+    include: {
+      versions: {
+        where: { isActive: true },
+        take: 1,
+        include: {
+          examQuestions: { select: { points: true } },
+          examAttempts: {
+            where: { status: { in: ["SUBMITTED", "GRADED", "TERMINATED"] } },
+            select: { status: true, answers: { select: { pointsAwarded: true } } },
+          },
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return exams.map((exam) => {
+    const version = exam.versions[0];
+    const attempts = version?.examAttempts ?? [];
+    const maxPoints = version?.examQuestions.reduce((sum, q) => sum + q.points, 0) ?? 0;
+
+    const graded = attempts.filter((a) => a.status === "GRADED");
+    const pending = attempts.filter((a) => a.status === "SUBMITTED");
+    const terminated = attempts.filter((a) => a.status === "TERMINATED");
+
+    const averageScorePercent =
+      graded.length > 0 && maxPoints > 0
+        ? (graded.reduce((sum, a) => sum + a.answers.reduce((s, ans) => s + (ans.pointsAwarded ?? 0), 0), 0) /
+            (graded.length * maxPoints)) *
+          100
+        : null;
+
+    return {
+      examId: exam.id,
+      title: exam.title,
+      status: exam.status,
+      submittedCount: attempts.length,
+      pendingCount: pending.length,
+      gradedCount: graded.length,
+      terminatedCount: terminated.length,
+      averageScorePercent,
+    };
   });
 }
 

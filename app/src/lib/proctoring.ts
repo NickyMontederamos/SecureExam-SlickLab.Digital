@@ -18,9 +18,26 @@ export class SubmissionNotFoundError extends Error {
   }
 }
 
-async function assignedCourseIds(db: ReturnType<typeof forTenant>, proctorId: string) {
-  const rows = await db.courseProctor.findMany({ where: { userId: proctorId }, select: { courseId: true } });
+/**
+ * PROCTOR is scoped to whichever courses they're a CourseProctor on
+ * (returns that course-id list). Any other role that reaches these
+ * functions — in practice only INSTITUTION_ADMIN, via its exam_attempt
+ * "approve"/"delete" permissions (rbac.ts) — gets institution-wide
+ * authority instead: `null` means "no course filter," not "no courses."
+ * An admin doesn't need (and normally won't have) a CourseProctor row of
+ * their own to act on any course in their institution.
+ */
+async function scopedCourseIds(db: ReturnType<typeof forTenant>, actor: { id: string; role: Role }): Promise<string[] | null> {
+  if (actor.role !== "PROCTOR") {
+    return null;
+  }
+  const rows = await db.courseProctor.findMany({ where: { userId: actor.id }, select: { courseId: true } });
   return rows.map((r) => r.courseId);
+}
+
+/** Whether actor may act on a specific course's attempts without an explicit CourseProctor row — true for institution-wide roles, false for a plain PROCTOR (who must be individually assigned). */
+function hasInstitutionWideAuthority(role: Role): boolean {
+  return role !== "PROCTOR";
 }
 
 /**
@@ -33,13 +50,16 @@ export async function listBookedAttemptsForProctor(institutionId: string, actor:
   assertCan(actor.role, "exam_attempt", "read");
 
   const db = forTenant(institutionId);
-  const courseIds = await assignedCourseIds(db, actor.id);
-  if (courseIds.length === 0) {
+  const courseIds = await scopedCourseIds(db, actor);
+  if (courseIds && courseIds.length === 0) {
     return [];
   }
 
   return db.examAttempt.findMany({
-    where: { status: "NOT_STARTED", examVersion: { exam: { courseId: { in: courseIds } } } },
+    where: {
+      status: "NOT_STARTED",
+      ...(courseIds ? { examVersion: { exam: { courseId: { in: courseIds } } } } : {}),
+    },
     include: { student: true, examVersion: { include: { exam: true } } },
     orderBy: { scheduledFor: "asc" },
   });
@@ -94,8 +114,8 @@ export async function listPendingApprovalsForProctor(institutionId: string, acto
   assertCan(actor.role, "exam_attempt", "approve");
 
   const db = forTenant(institutionId);
-  const courseIds = await assignedCourseIds(db, actor.id);
-  if (courseIds.length === 0) {
+  const courseIds = await scopedCourseIds(db, actor);
+  if (courseIds && courseIds.length === 0) {
     return [];
   }
 
@@ -104,7 +124,7 @@ export async function listPendingApprovalsForProctor(institutionId: string, acto
       status: "NOT_STARTED",
       proctorRequestedAt: { not: null },
       proctorApprovedAt: null,
-      examVersion: { exam: { courseId: { in: courseIds } } },
+      ...(courseIds ? { examVersion: { exam: { courseId: { in: courseIds } } } } : {}),
     },
     include: { student: true, examVersion: { include: { exam: true } } },
     orderBy: { proctorRequestedAt: "asc" },
@@ -128,11 +148,13 @@ export async function approveProctorStart(institutionId: string, actor: { id: st
   if (!attempt) {
     throw new AttemptNotFoundError(attemptId);
   }
-  const assigned = await db.courseProctor.findFirst({
-    where: { courseId: attempt.examVersion.exam.courseId, userId: actor.id },
-  });
-  if (!assigned) {
-    throw new ProctorNotAssignedError(attemptId);
+  if (!hasInstitutionWideAuthority(actor.role)) {
+    const assigned = await db.courseProctor.findFirst({
+      where: { courseId: attempt.examVersion.exam.courseId, userId: actor.id },
+    });
+    if (!assigned) {
+      throw new ProctorNotAssignedError(attemptId);
+    }
   }
   if (attempt.status !== "NOT_STARTED") {
     throw new AttemptAlreadyFinishedError(attemptId);
@@ -149,8 +171,8 @@ export async function listPendingVerificationsForProctor(institutionId: string, 
   assertCan(actor.role, "exam_attempt", "approve");
 
   const db = forTenant(institutionId);
-  const courseIds = await assignedCourseIds(db, actor.id);
-  if (courseIds.length === 0) {
+  const courseIds = await scopedCourseIds(db, actor);
+  if (courseIds && courseIds.length === 0) {
     return [];
   }
 
@@ -158,7 +180,7 @@ export async function listPendingVerificationsForProctor(institutionId: string, 
     where: {
       status: { in: ["SUBMITTED", "GRADED"] },
       submission: { verifiedAt: null },
-      examVersion: { exam: { courseId: { in: courseIds } } },
+      ...(courseIds ? { examVersion: { exam: { courseId: { in: courseIds } } } } : {}),
     },
     include: { student: true, examVersion: { include: { exam: true } }, submission: true },
     orderBy: { submittedAt: "asc" },
@@ -184,11 +206,13 @@ export async function verifySubmission(institutionId: string, actor: { id: strin
   if (!attempt) {
     throw new AttemptNotFoundError(attemptId);
   }
-  const assigned = await db.courseProctor.findFirst({
-    where: { courseId: attempt.examVersion.exam.courseId, userId: actor.id },
-  });
-  if (!assigned) {
-    throw new ProctorNotAssignedError(attemptId);
+  if (!hasInstitutionWideAuthority(actor.role)) {
+    const assigned = await db.courseProctor.findFirst({
+      where: { courseId: attempt.examVersion.exam.courseId, userId: actor.id },
+    });
+    if (!assigned) {
+      throw new ProctorNotAssignedError(attemptId);
+    }
   }
   if (!attempt.submission) {
     throw new SubmissionNotFoundError(attemptId);
@@ -201,4 +225,28 @@ export async function verifySubmission(institutionId: string, actor: { id: strin
     where: { id: attempt.submission.id },
     data: { verifiedAt: new Date(), verifiedById: actor.id },
   });
+}
+
+/**
+ * Admin-only "reset" action (rbac.ts's exam_attempt "delete", currently only
+ * INSTITUTION_ADMIN): deletes a booking/attempt outright — its events,
+ * answers, and submission cascade with it. For a stuck attempt (wrong
+ * student, test data, a booking made by mistake) rather than a real
+ * integrity decision — that's resolveIntegrityReview in integrity.ts, which
+ * keeps the record and marks it TERMINATED instead of erasing it. This
+ * erases it, on purpose: cleanup, not an academic-record decision.
+ */
+export async function cancelAttempt(institutionId: string, actor: { role: Role }, attemptId: string) {
+  assertCan(actor.role, "exam_attempt", "delete");
+
+  const db = forTenant(institutionId);
+  const attempt = await db.examAttempt.findFirst({ where: { id: attemptId } });
+  if (!attempt) {
+    throw new AttemptNotFoundError(attemptId);
+  }
+
+  await db.attemptEvent.deleteMany({ where: { attemptId } });
+  await db.submission.deleteMany({ where: { attemptId } });
+  await db.examAnswer.deleteMany({ where: { attemptId } });
+  await db.examAttempt.delete({ where: { id: attemptId } });
 }

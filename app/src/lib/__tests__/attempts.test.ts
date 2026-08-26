@@ -43,6 +43,7 @@ describe("exam attempts (start / save / submit / grade)", () => {
     faculty = await platform.user.create({
       data: { institutionId: institutionA.id, email: `attempt-faculty-${runId}@test.local`, name: "Faculty", role: "FACULTY", passwordHash: "x" },
     });
+    await platform.courseFaculty.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: faculty.id } });
     studentEnrolled = await platform.user.create({
       data: { institutionId: institutionA.id, email: `attempt-student-${runId}@test.local`, name: "Student", role: "STUDENT", passwordHash: "x" },
     });
@@ -66,7 +67,7 @@ describe("exam attempts (start / save / submit / grade)", () => {
       correctAnswer: { choiceIds: ["0"] },
       points: 2,
     });
-    const mcExamQuestion = await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId, questionId: mcQuestion.id, points: 2 });
+    const mcExamQuestion = await addExamQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, { examId, questionId: mcQuestion.id, points: 2 });
     mcExamQuestionId = mcExamQuestion.id;
 
     const { question: essayQuestion } = await createQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, {
@@ -75,10 +76,10 @@ describe("exam attempts (start / save / submit / grade)", () => {
       prompt: "Explain forum shopping.",
       points: 10,
     });
-    const essayExamQuestion = await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId, questionId: essayQuestion.id, points: 10 });
+    const essayExamQuestion = await addExamQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, { examId, questionId: essayQuestion.id, points: 10 });
     essayExamQuestionId = essayExamQuestion.id;
 
-    await publishExam(institutionA.id, { role: "FACULTY" }, examId);
+    await publishExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, examId);
   });
 
   afterAll(async () => {
@@ -92,6 +93,7 @@ describe("exam attempts (start / save / submit / grade)", () => {
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.institution.deleteMany({ where: { id: institutionA.id } });
@@ -254,6 +256,7 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
     faculty = await platform.user.create({
       data: { institutionId: institutionA.id, email: `booking-faculty-${runId}@test.local`, name: "Faculty", role: "FACULTY", passwordHash: "x" },
     });
+    await platform.courseFaculty.create({ data: { institutionId: institutionA.id, courseId: courseA.id, userId: faculty.id } });
     proctor = await platform.user.create({
       data: { institutionId: institutionA.id, email: `booking-proctor-${runId}@test.local`, name: "Proctor", role: "PROCTOR", passwordHash: "x" },
     });
@@ -278,8 +281,8 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
       correctAnswer: { choiceIds: ["0"] },
       points: 1,
     });
-    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId, questionId: question.id, points: 1 });
-    await publishExam(institutionA.id, { role: "FACULTY" }, examId);
+    await addExamQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, { examId, questionId: question.id, points: 1 });
+    await publishExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, examId);
 
     windowFrom = new Date(Date.now() + 60 * 60 * 1000);
     windowUntil = new Date(Date.now() + 4 * 60 * 60 * 1000);
@@ -291,8 +294,8 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
       availableUntil: windowUntil,
     });
     windowedExamId = windowedExam.id;
-    await addExamQuestion(institutionA.id, { role: "FACULTY" }, { examId: windowedExamId, questionId: question.id, points: 1 });
-    await publishExam(institutionA.id, { role: "FACULTY" }, windowedExamId);
+    await addExamQuestion(institutionA.id, { id: faculty.id, role: "FACULTY" }, { examId: windowedExamId, questionId: question.id, points: 1 });
+    await publishExam(institutionA.id, { id: faculty.id, role: "FACULTY" }, windowedExamId);
   });
 
   afterAll(async () => {
@@ -307,6 +310,7 @@ describe("booking flow (bookAttempt / beginBookedAttempt)", () => {
     await platform.questionVersion.deleteMany({ where: { question: { institutionId: institutionA.id } } });
     await platform.question.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.courseProctor.deleteMany({ where: { institutionId: institutionA.id } });
+    await platform.courseFaculty.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.enrollment.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.user.deleteMany({ where: { institutionId: institutionA.id } });
     await platform.course.deleteMany({ where: { institutionId: institutionA.id } });

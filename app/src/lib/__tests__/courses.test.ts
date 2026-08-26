@@ -91,7 +91,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     await assignFaculty(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, facultyA.id);
     await enrollStudent(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, studentA.id);
 
-    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    const roster = await getCourseWithRoster(institutionA.id, { id: "unused-for-admin", role: "INSTITUTION_ADMIN" }, courseId);
     expect(roster.faculty.some((f) => f.userId === facultyA.id)).toBe(true);
     expect(roster.enrollments.some((e) => e.userId === studentA.id)).toBe(true);
   });
@@ -102,7 +102,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
 
     await assignProctor(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, proctorA.id);
 
-    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    const roster = await getCourseWithRoster(institutionA.id, { id: "unused-for-admin", role: "INSTITUTION_ADMIN" }, courseId);
     expect(roster.proctors.some((p) => p.userId === proctorA.id)).toBe(true);
   });
 
@@ -121,7 +121,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
 
     await unassignProctor(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, proctorA.id);
 
-    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    const roster = await getCourseWithRoster(institutionA.id, { id: "unused-for-admin", role: "INSTITUTION_ADMIN" }, courseId);
     expect(roster.proctors.some((p) => p.userId === proctorA.id)).toBe(false);
   });
 
@@ -149,7 +149,7 @@ describe("course management (INSTITUTION_ADMIN)", () => {
     await unassignFaculty(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, facultyA.id);
     await unenrollStudent(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId, studentA.id);
 
-    const roster = await getCourseWithRoster(institutionA.id, { role: "INSTITUTION_ADMIN" }, courseId);
+    const roster = await getCourseWithRoster(institutionA.id, { id: "unused-for-admin", role: "INSTITUTION_ADMIN" }, courseId);
     expect(roster.faculty.some((f) => f.userId === facultyA.id)).toBe(false);
     expect(roster.enrollments.some((e) => e.userId === studentA.id)).toBe(false);
   });

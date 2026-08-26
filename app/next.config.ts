@@ -1,12 +1,17 @@
 import type { NextConfig } from "next";
 
 /**
- * Baseline security headers (master prompt §25 OWASP baseline). A strict
- * Content-Security-Policy is deliberately NOT included yet — Next.js needs
- * either 'unsafe-inline' (weak) or a nonce wired through middleware
- * (correct, more setup) for its bootstrap scripts, and shipping a
- * half-correct CSP is worse than none. Tracked as a follow-up in
- * PROJECT_STATUS.md rather than rushed in here.
+ * Baseline security headers (master prompt §25 OWASP baseline).
+ *
+ * Content-Security-Policy is deliberately NOT set here — it needs a fresh
+ * per-request nonce, which a static header table cannot produce. It lives
+ * in `src/middleware.ts` instead (docs/WORLD_CLASS_AUDIT.md A-04). Keeping
+ * the two sets separate avoids a stale duplicate CSP here silently
+ * overriding the real one; browsers enforce the *intersection* of multiple
+ * CSP headers, so a second one is a debugging nightmare, not a safety net.
+ *
+ * X-Frame-Options stays even though the CSP's `frame-ancestors 'none'`
+ * supersedes it in modern browsers — it's the fallback for older ones.
  */
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },

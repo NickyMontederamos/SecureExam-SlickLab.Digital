@@ -171,7 +171,16 @@ Two concurrent submits (double-click, a retry, a flaky connection replay) can bo
 
 ---
 
-### 🟠 A-04 (P1) — No Content-Security-Policy
+### ✅ A-04 (P1) — No Content-Security-Policy — **FIXED 2026-08-26**
+
+> **Resolved.** Nonce-based CSP with `strict-dynamic` in `src/middleware.ts`,
+> no `unsafe-inline` in `script-src`. `unsafe-eval` is dev-only (React
+> Refresh). Known remaining gap: `style-src` still allows `unsafe-inline`,
+> because Tailwind v4 and next/font inject inline styles with no nonce path
+> — documented in the middleware rather than hidden. Regression suite:
+> `tests/e2e/security-headers.spec.ts` (4 tests), including one that drives
+> a real login to prove the CSP does not break hydration. Original finding
+> preserved below.
 
 Confirmed absent: there is **no `middleware.ts`** anywhere in the app, and `next.config.ts` ships five security headers with CSP deliberately excluded.
 

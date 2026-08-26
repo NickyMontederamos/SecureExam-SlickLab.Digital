@@ -139,7 +139,6 @@ export default async function TakeExamPage({ params }: { params: Promise<{ attem
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   const deadline = attemptDeadline(attempt, attempt.examVersion.timeLimitMinutes);
-  const remainingSeconds = deadline ? Math.max(0, Math.floor((deadline.getTime() - now) / 1000)) : 0;
   const deadlineEpochMs = deadline ? deadline.getTime() : now;
 
   if (deadline && now > deadline.getTime()) {

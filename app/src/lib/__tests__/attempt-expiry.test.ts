@@ -207,7 +207,7 @@ describe("A-01 regression: server-enforced exam time limit (DB)", () => {
       data: { pausedAt: new Date(Date.now() - 10 * 60 * 1000) },
     });
 
-    await resolveIntegrityReview(institutionA.id, { role: "FACULTY" }, attempt.id, "REINSTATE");
+    await resolveIntegrityReview(institutionA.id, { id: faculty.id, role: "FACULTY" }, attempt.id, "REINSTATE");
 
     const resumed = await platform.examAttempt.findUnique({ where: { id: attempt.id } });
     expect(resumed?.status).toBe("IN_PROGRESS");

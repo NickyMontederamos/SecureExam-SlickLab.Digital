@@ -3,6 +3,7 @@ import { assertCan, can } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { CourseNotFoundError } from "./questions";
 import { assertFacultyAssignedToCourse } from "./courses";
+import { AUDIT_ACTIONS, logAudit } from "./audit";
 
 export class ExamNotFoundError extends Error {
   constructor(examId: string) {
@@ -390,8 +391,24 @@ export async function deleteExam(institutionId: string, actor: { id: string; rol
       db.examVersion.deleteMany({ where: { examId } }),
       db.exam.delete({ where: { id: examId } }),
     ]);
+    await logAudit({
+      institutionId,
+      actorUserId: actor.id,
+      action: AUDIT_ACTIONS.examDelete,
+      resourceType: "exam",
+      resourceId: examId,
+      result: "SUCCESS",
+      metadata: { title: exam.title, courseId: exam.courseId, status: exam.status, forced: false },
+    });
     return;
   }
+
+  // Force-delete of a PUBLISHED exam destroys real academic records
+  // (every attempt, answer, integrity event and submission against it).
+  // Count them BEFORE the transaction — after it there is nothing left to
+  // count, and "how much was destroyed" is the only thing that makes this
+  // reconstructable in an audit.
+  const destroyedAttempts = await db.examAttempt.count({ where: { examVersion: { examId } } });
 
   await db.$transaction([
     db.attemptEvent.deleteMany({ where: { attempt: { examVersion: { examId } } } }),
@@ -402,6 +419,22 @@ export async function deleteExam(institutionId: string, actor: { id: string; rol
     db.examVersion.deleteMany({ where: { examId } }),
     db.exam.delete({ where: { id: examId } }),
   ]);
+
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id,
+    action: AUDIT_ACTIONS.examDelete,
+    resourceType: "exam",
+    resourceId: examId,
+    result: "SUCCESS",
+    metadata: {
+      title: exam.title,
+      courseId: exam.courseId,
+      status: exam.status,
+      forced: true,
+      destroyedAttempts,
+    },
+  });
 }
 
 /** Freezes the active version and marks the exam PUBLISHED. Irreversible in Phase 1 — no unpublish. */
@@ -427,5 +460,26 @@ export async function publishExam(institutionId: string, actor: { id: string; ro
     throw new EmptyExamError(examId);
   }
 
-  return db.exam.update({ where: { id: examId }, data: { status: "PUBLISHED" } });
+  const published = await db.exam.update({ where: { id: examId }, data: { status: "PUBLISHED" } });
+
+  // Publishing is irreversible in Phase 1 and freezes the version students
+  // will sit, so the question count and time limit at publish time are
+  // worth capturing — they define the exam as delivered.
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id,
+    action: AUDIT_ACTIONS.examPublish,
+    resourceType: "exam",
+    resourceId: examId,
+    result: "SUCCESS",
+    metadata: {
+      title: exam.title,
+      courseId: exam.courseId,
+      examVersionId: activeVersion.id,
+      questionCount: activeVersion.examQuestions.length,
+      timeLimitMinutes: activeVersion.timeLimitMinutes,
+    },
+  });
+
+  return published;
 }

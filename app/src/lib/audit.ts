@@ -14,6 +14,49 @@ interface AuditEvent {
 }
 
 /**
+ * The canonical vocabulary of auditable actions. Centralised because the
+ * audit log's whole value is being *searchable* — a typo'd action string
+ * ("exam.publish" vs "exam.published") produces a row that no filter will
+ * ever surface again, which is worse than no row at all since it looks
+ * like coverage exists.
+ *
+ * Naming convention: `<resource>.<verb>`, past-tense-free, lowercase.
+ * `AUDIT_ACTION_PREFIXES` below documents the groupings the /audit page's
+ * "action starts with" filter is designed around.
+ */
+export const AUDIT_ACTIONS = {
+  authLogin: "auth.login",
+
+  examCreate: "exam.create",
+  examUpdate: "exam.update",
+  examPublish: "exam.publish",
+  examDelete: "exam.delete",
+
+  gradeAssign: "grade.assign",
+
+  attemptApproveStart: "attempt.approve_start",
+  attemptVerifySubmission: "attempt.verify_submission",
+  attemptCancel: "attempt.cancel",
+  attemptExpire: "attempt.expire",
+  integrityResolve: "integrity.resolve",
+
+  userCreate: "user.create",
+  userActivate: "user.activate",
+  userDeactivate: "user.deactivate",
+  userPasswordReset: "user.password_reset",
+
+  courseCreate: "course.create",
+  courseUpdate: "course.update",
+  courseDelete: "course.delete",
+  rosterImport: "roster.import",
+} as const;
+
+export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
+
+/** Prefix groups for the audit viewer's filter, so the UI and the writers agree on what's greppable. */
+export const AUDIT_ACTION_PREFIXES = ["auth.", "exam.", "grade.", "attempt.", "integrity.", "user.", "course.", "roster."] as const;
+
+/**
  * WHO / WHAT / WHEN / WHERE / RESULT (master prompt §20). Always writes
  * through forPlatform() rather than a tenant-scoped client — audit writes
  * happen at moments (e.g. a failed login before we know the tenant, or

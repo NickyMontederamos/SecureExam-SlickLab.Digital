@@ -2,6 +2,7 @@ import type { Role } from "@prisma/client";
 import { assertCan, ForbiddenError } from "./rbac";
 import { forPlatform, forTenant } from "./tenant-db";
 import { hashPassword } from "./password";
+import { AUDIT_ACTIONS, logAudit } from "./audit";
 
 export class EmailTakenError extends Error {
   constructor(email: string) {
@@ -27,7 +28,7 @@ export interface CreateUserInput {
  * INSTITUTION_ADMIN holds doesn't itself distinguish which roles they may
  * assign.
  */
-export async function createUser(institutionId: string, actor: { role: Role }, input: CreateUserInput) {
+export async function createUser(institutionId: string, actor: { id?: string; role: Role }, input: CreateUserInput) {
   assertCan(actor.role, "user", "create");
   if (!CREATABLE_ROLES.includes(input.role)) {
     throw new ForbiddenError(actor.role, "user", "create");
@@ -43,9 +44,23 @@ export async function createUser(institutionId: string, actor: { role: Role }, i
 
   const passwordHash = await hashPassword(input.password);
   const db = forTenant(institutionId);
-  return db.user.create({
+  const created = await db.user.create({
     data: { email: input.email, name: input.name, role: input.role, passwordHash } as never,
   });
+
+  // Never log the password or its hash — only the fact of creation and the
+  // privilege level granted, which is the part an auditor cares about.
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id ?? null,
+    action: AUDIT_ACTIONS.userCreate,
+    resourceType: "user",
+    resourceId: created.id,
+    result: "SUCCESS",
+    metadata: { email: created.email, name: created.name, role: created.role },
+  });
+
+  return created;
 }
 
 export async function listUsers(institutionId: string, actor: { role: Role }) {
@@ -62,13 +77,30 @@ export async function listUsers(institutionId: string, actor: { role: Role }) {
  *
  * Reactivating clears the cutoff so the account can sign in normally again.
  */
-export async function setUserActive(institutionId: string, actor: { role: Role }, userId: string, isActive: boolean) {
+export async function setUserActive(
+  institutionId: string,
+  actor: { id?: string; role: Role },
+  userId: string,
+  isActive: boolean
+) {
   assertCan(actor.role, "user", "update");
   const db = forTenant(institutionId);
-  return db.user.update({
+  const updated = await db.user.update({
     where: { id: userId },
     data: { isActive, sessionsValidAfter: isActive ? null : new Date() },
   });
+
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id ?? null,
+    action: isActive ? AUDIT_ACTIONS.userActivate : AUDIT_ACTIONS.userDeactivate,
+    resourceType: "user",
+    resourceId: userId,
+    result: "SUCCESS",
+    metadata: { email: updated.email, role: updated.role, sessionsRevoked: !isActive },
+  });
+
+  return updated;
 }
 
 /**
@@ -76,15 +108,32 @@ export async function setUserActive(institutionId: string, actor: { role: Role }
  * password-reset-by-email path yet (see DEPLOYMENT.md). This replaces the
  * previous stopgap of editing passwordHash directly via a script.
  */
-export async function resetUserPassword(institutionId: string, actor: { role: Role }, userId: string, newPassword: string) {
+export async function resetUserPassword(
+  institutionId: string,
+  actor: { id?: string; role: Role },
+  userId: string,
+  newPassword: string
+) {
   assertCan(actor.role, "user", "update");
   const passwordHash = await hashPassword(newPassword);
   const db = forTenant(institutionId);
   // A password reset must terminate existing sessions. If the reason for
   // the reset is a compromised account, leaving the attacker's already-
   // issued token working would defeat the entire point of resetting it.
-  await db.user.update({
+  const updated = await db.user.update({
     where: { id: userId },
     data: { passwordHash, sessionsValidAfter: new Date() },
+  });
+
+  // Records that a reset happened and by whom — never the password itself,
+  // in any form.
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id ?? null,
+    action: AUDIT_ACTIONS.userPasswordReset,
+    resourceType: "user",
+    resourceId: userId,
+    result: "SUCCESS",
+    metadata: { email: updated.email, role: updated.role, sessionsRevoked: true },
   });
 }

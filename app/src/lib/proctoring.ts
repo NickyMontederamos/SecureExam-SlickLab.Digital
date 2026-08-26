@@ -2,6 +2,7 @@ import type { Role } from "@prisma/client";
 import { assertCan } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { AttemptAlreadyFinishedError, AttemptNotFoundError, AttemptOwnershipError } from "./attempts";
+import { AUDIT_ACTIONS, logAudit } from "./audit";
 
 /** A PROCTOR acting on an attempt outside every course they're assigned to via CourseProctor — see courses.ts's assignProctor. */
 export class ProctorNotAssignedError extends Error {
@@ -160,10 +161,29 @@ export async function approveProctorStart(institutionId: string, actor: { id: st
     throw new AttemptAlreadyFinishedError(attemptId);
   }
 
-  return db.examAttempt.update({
+  const approved = await db.examAttempt.update({
     where: { id: attemptId },
     data: { proctorApprovedAt: attempt.proctorApprovedAt ?? new Date() },
   });
+
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id,
+    action: AUDIT_ACTIONS.attemptApproveStart,
+    resourceType: "exam_attempt",
+    resourceId: attemptId,
+    result: "SUCCESS",
+    metadata: {
+      studentId: attempt.studentId,
+      examId: attempt.examVersion.exam.id,
+      examTitle: attempt.examVersion.exam.title,
+      // True when an admin approved without holding a CourseProctor row —
+      // legitimate (Milestone 6.5) but worth being able to filter for.
+      viaInstitutionWideAuthority: hasInstitutionWideAuthority(actor.role),
+    },
+  });
+
+  return approved;
 }
 
 /** Submitted/graded attempts still waiting on this proctor's "approve to finish" sign-off — the "finish" half of the proctor dashboard. */
@@ -221,10 +241,22 @@ export async function verifySubmission(institutionId: string, actor: { id: strin
     return attempt.submission;
   }
 
-  return db.submission.update({
+  const verified = await db.submission.update({
     where: { id: attempt.submission.id },
     data: { verifiedAt: new Date(), verifiedById: actor.id },
   });
+
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id,
+    action: AUDIT_ACTIONS.attemptVerifySubmission,
+    resourceType: "submission",
+    resourceId: attempt.submission.id,
+    result: "SUCCESS",
+    metadata: { attemptId, studentId: attempt.studentId, attemptStatus: attempt.status },
+  });
+
+  return verified;
 }
 
 /**
@@ -236,7 +268,7 @@ export async function verifySubmission(institutionId: string, actor: { id: strin
  * keeps the record and marks it TERMINATED instead of erasing it. This
  * erases it, on purpose: cleanup, not an academic-record decision.
  */
-export async function cancelAttempt(institutionId: string, actor: { role: Role }, attemptId: string) {
+export async function cancelAttempt(institutionId: string, actor: { id: string; role: Role }, attemptId: string) {
   assertCan(actor.role, "exam_attempt", "delete");
 
   const db = forTenant(institutionId);
@@ -245,8 +277,29 @@ export async function cancelAttempt(institutionId: string, actor: { role: Role }
     throw new AttemptNotFoundError(attemptId);
   }
 
+  // Capture what's about to be destroyed before destroying it — this is an
+  // erasure, not a status change, so the audit row is the only remaining
+  // evidence the attempt ever existed.
+  const answerCount = await db.examAnswer.count({ where: { attemptId } });
+
   await db.attemptEvent.deleteMany({ where: { attemptId } });
   await db.submission.deleteMany({ where: { attemptId } });
   await db.examAnswer.deleteMany({ where: { attemptId } });
   await db.examAttempt.delete({ where: { id: attemptId } });
+
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id,
+    action: AUDIT_ACTIONS.attemptCancel,
+    resourceType: "exam_attempt",
+    resourceId: attemptId,
+    result: "SUCCESS",
+    metadata: {
+      studentId: attempt.studentId,
+      examVersionId: attempt.examVersionId,
+      statusAtCancellation: attempt.status,
+      destroyedAnswers: answerCount,
+      startedAt: attempt.startedAt?.toISOString() ?? null,
+    },
+  });
 }

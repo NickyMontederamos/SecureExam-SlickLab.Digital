@@ -3,6 +3,7 @@ import { assertCan } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { ExamNotFoundError } from "./exams";
 import { assertFacultyAssignedToCourse } from "./courses";
+import { AUDIT_ACTIONS, logAudit } from "./audit";
 
 export class AnswerNotFoundError extends Error {
   constructor(answerId: string) {
@@ -138,10 +139,34 @@ export async function gradeAnswer(
   }
 
   const clamped = Math.max(0, Math.min(pointsAwarded, answer.examQuestion.points));
+  const previousPoints = answer.pointsAwarded;
 
   await db.examAnswer.update({
     where: { id: examAnswerId },
     data: { pointsAwarded: clamped, autoGraded: false, gradedAt: new Date(), gradedById: actor.id },
+  });
+
+  // The single most important audit record in the system: "who changed
+  // this grade, from what, to what, and when". Records the previous value
+  // explicitly — a grade change is only meaningful in an appeal if the
+  // prior score is recoverable, and the row it overwrote is gone.
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id,
+    action: AUDIT_ACTIONS.gradeAssign,
+    resourceType: "exam_answer",
+    resourceId: examAnswerId,
+    result: "SUCCESS",
+    metadata: {
+      attemptId: answer.attemptId,
+      studentId: answer.attempt.studentId,
+      previousPoints,
+      newPoints: clamped,
+      maxPoints: answer.examQuestion.points,
+      requestedPoints: pointsAwarded,
+      wasClamped: pointsAwarded !== clamped,
+      overrodeAutoGrade: answer.autoGraded,
+    },
   });
 
   const remaining = await db.examAnswer.findMany({ where: { attemptId: answer.attemptId } });

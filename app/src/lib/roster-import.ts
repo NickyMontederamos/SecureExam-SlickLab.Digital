@@ -5,6 +5,7 @@ import { assertCan } from "./rbac";
 import { forPlatform, forTenant } from "./tenant-db";
 import { CourseNotFoundError } from "./courses";
 import { generateTempPassword, hashPassword } from "./password";
+import { AUDIT_ACTIONS, logAudit } from "./audit";
 
 type RosterRole = "FACULTY" | "STUDENT";
 const ROSTER_ROLES: RosterRole[] = ["FACULTY", "STUDENT"];
@@ -149,7 +150,7 @@ export interface RosterImportResult {
  */
 export async function importRosterFromCsv(
   institutionId: string,
-  actor: { role: Role },
+  actor: { id?: string; role: Role },
   courseId: string,
   csvText: string
 ): Promise<RosterImportResult> {
@@ -250,6 +251,26 @@ export async function importRosterFromCsv(
         studentsEnrolled++;
       }
     }
+  });
+
+  // One audit row for the batch, listing the accounts created (emails and
+  // roles only — never the generated passwords, which exist solely in the
+  // read-once in-memory stash). A bulk import that silently creates dozens
+  // of credentialed accounts is exactly the kind of action an institution
+  // needs to be able to reconstruct later.
+  await logAudit({
+    institutionId,
+    actorUserId: actor.id ?? null,
+    action: AUDIT_ACTIONS.rosterImport,
+    resourceType: "course",
+    resourceId: courseId,
+    result: "SUCCESS",
+    metadata: {
+      facultyAssigned,
+      studentsEnrolled,
+      accountsCreated: created.length,
+      createdAccounts: created.map((a) => ({ email: a.email, role: a.role })),
+    },
   });
 
   return {

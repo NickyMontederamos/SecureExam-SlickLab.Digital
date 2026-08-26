@@ -112,7 +112,7 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
     expect(entry!.events).toHaveLength(3);
 
     // Reinstating clears it from the queue and lets the student resume.
-    await resolveIntegrityReview(institutionA.id, { role: "FACULTY" }, attempt.id, "REINSTATE");
+    await resolveIntegrityReview(institutionA.id, { id: faculty.id, role: "FACULTY" }, attempt.id, "REINSTATE");
     const queueAfter = await listIntegrityReviewsForExam(institutionA.id, { role: "FACULTY" }, examId);
     expect(queueAfter.find((a) => a.id === attempt.id)).toBeUndefined();
 
@@ -127,7 +127,7 @@ describe("integrity monitor (event log, 3-strike auto-pause, faculty review)", (
     await recordAttemptEvent(institutionA.id, { id: student.id, role: "STUDENT" }, attempt.id, "WINDOW_BLUR");
     await recordAttemptEvent(institutionA.id, { id: student.id, role: "STUDENT" }, attempt.id, "WINDOW_BLUR");
 
-    await resolveIntegrityReview(institutionA.id, { role: "FACULTY" }, attempt.id, "FAIL");
+    await resolveIntegrityReview(institutionA.id, { id: faculty.id, role: "FACULTY" }, attempt.id, "FAIL");
 
     const platform = forPlatform();
     const reloaded = await platform.examAttempt.findUnique({ where: { id: attempt.id } });

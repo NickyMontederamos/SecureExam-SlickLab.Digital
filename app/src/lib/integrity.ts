@@ -3,6 +3,7 @@ import { assertCan, ForbiddenError } from "./rbac";
 import { forTenant } from "./tenant-db";
 import { AttemptNotFoundError, AttemptOwnershipError } from "./attempts";
 import { ExamNotFoundError } from "./exams";
+import { AUDIT_ACTIONS, logAudit } from "./audit";
 
 /** How many warning-worthy signals before an attempt auto-pauses. Not institution-configurable yet — see docs/PITCH_ROADMAP.md. */
 const WARNING_THRESHOLD = 3;
@@ -143,7 +144,7 @@ export async function getIntegrityReview(institutionId: string, actor: { role: R
  */
 export async function resolveIntegrityReview(
   institutionId: string,
-  actor: { role: Role },
+  actor: { id: string; role: Role },
   attemptId: string,
   decision: "REINSTATE" | "FAIL"
 ) {
@@ -159,6 +160,25 @@ export async function resolveIntegrityReview(
     throw new AttemptNotInProgressError(attemptId);
   }
 
+  // The strike count that triggered the pause is part of the justification
+  // for whatever the faculty member decides, so it belongs in the record
+  // alongside the decision itself.
+  const strikeCount = await db.attemptEvent.count({
+    where: { attemptId, type: { in: STRIKE_EVENT_TYPES } },
+  });
+
+  const auditDecision = async (outcome: string, extra: Record<string, unknown> = {}) => {
+    await logAudit({
+      institutionId,
+      actorUserId: actor.id,
+      action: AUDIT_ACTIONS.integrityResolve,
+      resourceType: "exam_attempt",
+      resourceId: attemptId,
+      result: "SUCCESS",
+      metadata: { decision, outcome, studentId: attempt.studentId, strikeCount, ...extra },
+    });
+  };
+
   if (decision === "REINSTATE") {
     // Credit back the time this attempt spent paused, so a review never
     // eats into the student's exam time — least of all one that clears
@@ -169,14 +189,28 @@ export async function resolveIntegrityReview(
     const extendedExpiry =
       attempt.expiresAt && pausedMs > 0 ? new Date(attempt.expiresAt.getTime() + pausedMs) : attempt.expiresAt;
 
-    return db.examAttempt.update({
+    const reinstated = await db.examAttempt.update({
       where: { id: attemptId },
       data: { status: "IN_PROGRESS", pausedAt: null, expiresAt: extendedExpiry },
     });
+
+    await auditDecision("IN_PROGRESS", {
+      creditedPausedMs: pausedMs,
+      newExpiresAt: extendedExpiry?.toISOString() ?? null,
+    });
+
+    return reinstated;
   }
 
-  return db.examAttempt.update({
+  // Terminal, and it is effectively a failing grade on integrity grounds —
+  // the single most consequential automated-adjacent decision the platform
+  // supports, so it must never be unattributable.
+  const terminated = await db.examAttempt.update({
     where: { id: attemptId },
     data: { status: "TERMINATED", submittedAt: new Date(), gradedAt: new Date() },
   });
+
+  await auditDecision("TERMINATED");
+
+  return terminated;
 }

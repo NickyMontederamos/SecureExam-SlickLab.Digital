@@ -257,10 +257,10 @@ describe("institution-admin oversight and cancelAttempt (docs/PITCH_ROADMAP.md M
     const booked = await bookAttempt(institutionA.id, { id: student.id, role: "STUDENT" }, examId);
 
     await expect(
-      cancelAttempt(institutionA.id, { role: "FACULTY" }, booked.id)
+      cancelAttempt(institutionA.id, { id: faculty.id, role: "FACULTY" }, booked.id)
     ).rejects.toThrow(ForbiddenError);
 
-    await cancelAttempt(institutionA.id, { role: "INSTITUTION_ADMIN" }, booked.id);
+    await cancelAttempt(institutionA.id, { id: "admin-actor", role: "INSTITUTION_ADMIN" }, booked.id);
 
     await expect(
       approveProctorStart(institutionA.id, { id: admin.id, role: "INSTITUTION_ADMIN" }, booked.id)

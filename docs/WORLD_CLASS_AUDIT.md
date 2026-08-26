@@ -181,7 +181,16 @@ The existing code comment is honest and correct about *why* it was deferred (a h
 
 ---
 
-### 🟠 A-05 (P1) — The audit trail is built but almost entirely unwired
+### ✅ A-05 (P1) — The audit trail is built but almost entirely unwired — **FIXED 2026-08-26**
+
+> **Resolved.** `logAudit()` is now called from every mutating domain
+> service: exam publish/delete, grade assignment (with the previous value),
+> proctor approve/verify/cancel, integrity-review decisions, user
+> create/deactivate/password-reset, and roster import. Action names are
+> centralised in `AUDIT_ACTIONS` so they stay filterable. Regression suite:
+> `src/lib/__tests__/audit-coverage.test.ts` (6 tests), including an
+> assertion that no password ever reaches the audit log. Original finding
+> preserved below.
 
 `AuditLog` is a well-designed, tenant-scoped, append-only-by-convention model (`schema.prisma:380-397`), and Milestone 6.7 shipped a filterable viewer at `/audit`. But a full call-site trace shows **`logAudit()` is called from exactly four places, all in `src/auth.ts`, all `auth.login`.**
 

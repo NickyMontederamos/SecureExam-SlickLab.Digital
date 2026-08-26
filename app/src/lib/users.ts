@@ -53,10 +53,22 @@ export async function listUsers(institutionId: string, actor: { role: Role }) {
   return forTenant(institutionId).user.findMany({ orderBy: { createdAt: "desc" } });
 }
 
+/**
+ * Deactivating stamps `sessionsValidAfter`, which cuts any session the user
+ * already has on its very next request — the periodic revalidation in
+ * auth.ts would catch it within ~30s anyway, but deactivation is the lever
+ * an institution pulls during an incident, so it must be immediate rather
+ * than eventually-consistent (docs/WORLD_CLASS_AUDIT.md A-02).
+ *
+ * Reactivating clears the cutoff so the account can sign in normally again.
+ */
 export async function setUserActive(institutionId: string, actor: { role: Role }, userId: string, isActive: boolean) {
   assertCan(actor.role, "user", "update");
   const db = forTenant(institutionId);
-  return db.user.update({ where: { id: userId }, data: { isActive } });
+  return db.user.update({
+    where: { id: userId },
+    data: { isActive, sessionsValidAfter: isActive ? null : new Date() },
+  });
 }
 
 /**
@@ -68,5 +80,11 @@ export async function resetUserPassword(institutionId: string, actor: { role: Ro
   assertCan(actor.role, "user", "update");
   const passwordHash = await hashPassword(newPassword);
   const db = forTenant(institutionId);
-  await db.user.update({ where: { id: userId }, data: { passwordHash } });
+  // A password reset must terminate existing sessions. If the reason for
+  // the reset is a compromised account, leaving the attacker's already-
+  // issued token working would defeat the entire point of resetting it.
+  await db.user.update({
+    where: { id: userId },
+    data: { passwordHash, sessionsValidAfter: new Date() },
+  });
 }

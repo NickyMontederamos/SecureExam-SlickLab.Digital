@@ -123,7 +123,16 @@ That claim is **false as written**. A reviewer reading that comment would reason
 
 ---
 
-### 🔴 A-02 (P0) — Deactivating a user does not end their session
+### ✅ A-02 (P0) — Deactivating a user does not end their session — **FIXED 2026-08-26**
+
+> **Resolved.** The `jwt` callback now revalidates against the database and
+> returns null (invalidating the session) for a deleted, deactivated, or
+> forcibly-revoked account, and refreshes role/tenant claims. Session
+> `maxAge` cut from the 30-day default to 8 hours. `User.sessionsValidAfter`
+> makes deactivation and password reset revoke existing sessions
+> immediately. Regression suite:
+> `src/lib/__tests__/session-validity.test.ts` (14 tests). Full write-up in
+> `docs/ERROR_LOG.md` ERROR-011. Original finding preserved below.
 
 `isActive` is checked in exactly one place — the login path:
 

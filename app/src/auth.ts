@@ -4,6 +4,7 @@ import { forPlatform } from "@/lib/tenant-db";
 import { verifyPassword } from "@/lib/password";
 import { logAudit } from "@/lib/audit";
 import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
+import { evaluateSession, needsRevalidation } from "@/lib/session-validity";
 
 /**
  * Credentials-only auth for Phase 1 (email + password against our own
@@ -14,9 +15,34 @@ import { checkRateLimit, resetRateLimit } from "@/lib/rate-limit";
  * at login time we don't yet know which tenant the caller belongs to — the
  * user's own institutionId IS the answer, and it becomes the tenant scope
  * for every request afterward via the JWT.
+ *
+ * Because the strategy is stateless JWT there is no session table to delete
+ * from, so revocation is enforced in the `jwt` callback instead — see the
+ * revalidation logic there (docs/WORLD_CLASS_AUDIT.md finding A-02).
  */
+
+/**
+ * How long a token's cached identity claims may go unverified against the
+ * database. Every request re-runs the `jwt` callback, so checking on every
+ * single one would add a primary-key lookup to each — this bounds the cost
+ * while keeping the worst-case window small.
+ *
+ * This is the *lazy* bound, not the guarantee: deactivation and password
+ * reset both stamp `sessionsValidAfter`, which is enforced on the very next
+ * request regardless of this interval.
+ */
+const SESSION_REVALIDATE_INTERVAL_MS = 30_000;
+
+/**
+ * Session lifetime. Auth.js defaults to 30 days, which is far too long for
+ * a platform where "deactivate this account" is the lever an institution
+ * pulls during an incident. Eight hours comfortably covers a full exam day
+ * while bounding how long any stolen token stays useful.
+ */
+const SESSION_MAX_AGE_SECONDS = 8 * 60 * 60;
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt", maxAge: SESSION_MAX_AGE_SECONDS },
   providers: [
     Credentials({
       credentials: {
@@ -97,11 +123,52 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    /**
+     * Runs on every request that touches the session. This is the only
+     * place a live session can be revoked under a stateless JWT strategy,
+     * so it carries three checks that used to not exist at all
+     * (docs/WORLD_CLASS_AUDIT.md A-02 — previously `isActive` was read once
+     * at login and never again, so deactivating an account left it fully
+     * usable until the token expired, and a demoted admin kept admin
+     * claims just as long):
+     *
+     *   1. the account still exists and is still active
+     *   2. no forced cutoff (`sessionsValidAfter`) postdates this login
+     *   3. role / institutionId are refreshed from the database, so a
+     *      demotion or tenant move takes effect without re-login
+     *
+     * Returning null invalidates the session outright.
+     */
+    async jwt({ token, user }) {
       if (user) {
+        // Fresh login. authorize() already validated everything, so just
+        // stamp the claims and the checkpoints.
         token.role = user.role;
         token.institutionId = user.institutionId;
+        // loginAt is deliberately never rewritten afterward — it is what
+        // sessionsValidAfter is compared against, so a rolling refresh must
+        // not be able to slide it forward past a revocation.
+        token.loginAt = Date.now();
+        token.checkedAt = Date.now();
+        return token;
       }
+
+      if (!needsRevalidation(token, SESSION_REVALIDATE_INTERVAL_MS)) {
+        return token;
+      }
+
+      const current = token.sub ? await forPlatform().user.findUnique({ where: { id: token.sub } }) : null;
+
+      const verdict = evaluateSession(current, token);
+      if (!verdict.valid) {
+        return null;
+      }
+
+      // Refresh the claims from the database so a role change or tenant
+      // move takes effect without requiring the user to sign in again.
+      token.role = current!.role;
+      token.institutionId = current!.institutionId;
+      token.checkedAt = Date.now();
       return token;
     },
     session({ session, token }) {

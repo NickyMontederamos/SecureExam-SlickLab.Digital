@@ -212,3 +212,42 @@ None warranted — this is an environment/tooling behaviour, not application log
 
 ### Status
 RESOLVED
+
+---
+
+## ERROR-011
+
+### Symptom
+Deactivating a user did not end their session. `isActive` was checked once at login and never again, so an account deactivated mid-session kept full access until its JWT expired — up to **30 days**, since no explicit `maxAge` was set and Auth.js defaults to that. Role changes were equally stale: a demoted admin kept admin claims for the same window. Found during the world-class readiness audit (`docs/WORLD_CLASS_AUDIT.md` finding A-02).
+
+The practical impact: "deactivate" is precisely the lever an institution reaches for during an incident — a student caught cheating mid-term, a faculty member who left, a compromised admin — and it did not do what its name implies.
+
+### Root Cause
+The session strategy is stateless JWT with no Prisma adapter (a deliberate architecture choice, see `docs/ARCHITECTURE_DECISIONS.md`). That means **there is no session table to delete from** — so revocation has to be enforced by re-checking the user on each request. The `jwt` callback only ever copied claims off the `user` object at initial sign-in:
+
+```ts
+jwt({ token, user }) {
+  if (user) { token.role = user.role; token.institutionId = user.institutionId; }
+  return token;   // no re-check of isActive, role, or tenant, ever
+}
+```
+
+Nothing was wrong with the login path; the gap was that nothing revisited the decision afterward.
+
+### Fix
+- Added `User.sessionsValidAfter` (additive nullable migration) — a hard cutoff instant. Any session established before it is rejected on its next request.
+- The `jwt` callback now revalidates against the database (at most once per 30s, to avoid a lookup on literally every request) and returns `null` — which invalidates the session — when the account is gone, inactive, or predates a forced cutoff. It also refreshes `role`/`institutionId`, so a demotion or tenant move takes effect without re-login.
+- Explicit `session.maxAge` of **8 hours**, replacing the 30-day default. Long enough for a full exam day, short enough to bound a stolen token.
+- `setUserActive(false)` and `resetUserPassword()` both stamp `sessionsValidAfter`, making revocation immediate rather than waiting for the 30s revalidation. Password reset revoking sessions matters most: if the reason for the reset is a compromised account, leaving the attacker's existing token working defeats the entire point.
+- Reactivating a user clears the cutoff.
+- `token.loginAt` records the original sign-in and is **never rewritten** — it is what `sessionsValidAfter` is compared against, so a rolling token refresh cannot slide it forward past a revocation.
+
+The revocation *decision* was deliberately extracted into `src/lib/session-validity.ts` as a pure function rather than left inline in the framework callback, so it is unit-testable without standing up NextAuth. Every branch that cannot positively confirm a session is still good returns "revoke" — including a cutoff-bearing user whose token has no `loginAt` claim to compare against.
+
+### Regression Test
+`src/lib/__tests__/session-validity.test.ts` — 14 tests covering the pure decision logic (deactivated, deleted, no-subject, before/after cutoff, missing-loginAt) and the DB-level wiring (deactivation stamps a cutoff, reactivation clears it, password reset revokes prior sessions but permits a fresh login).
+
+**General lesson: with a stateless JWT session, every authorization fact baked into the token is a snapshot that keeps being true until the token dies.** Anything an operator can change — active status, role, tenant — needs either a revalidation path or an explicit revocation marker. "We check it at login" is not the same as "we enforce it".
+
+### Status
+RESOLVED

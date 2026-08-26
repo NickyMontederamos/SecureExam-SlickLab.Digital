@@ -99,6 +99,17 @@ model User {
   name           String
   role           Role
   isActive       Boolean      @default(true)
+  /// Hard cutoff for existing sessions: any session established before this
+  /// instant is rejected on its next request, even if the JWT is otherwise
+  /// valid and unexpired. Set whenever access must be cut immediately
+  /// rather than at the next periodic revalidation — deactivation and
+  /// admin password reset (see users.ts). Null means "no forced cutoff",
+  /// which is the normal state for an untouched account.
+  ///
+  /// This exists because the session strategy is stateless JWT: without a
+  /// server-side session table there is nothing to delete, so revocation
+  /// has to be expressed as a timestamp the token is checked against.
+  sessionsValidAfter DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 

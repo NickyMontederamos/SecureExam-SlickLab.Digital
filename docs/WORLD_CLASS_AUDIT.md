@@ -26,7 +26,16 @@ The tree is green. **A green suite is not the same as production readiness** —
 
 ## 1. Maturity score
 
-### **62 / 100** — "Strong Phase 1 product, not yet production infrastructure for high-stakes assessment."
+### Original score: **62 / 100** — "Strong Phase 1 product, not yet production infrastructure for high-stakes assessment."
+
+> **Re-scored 2026-08-26 after the P0 remediation pass: ~78/100.**
+> All five P0 findings (A-01 through A-05) plus A-08 are fixed and
+> regression-tested; the suite grew from 139 to 168 unit tests and 7 to 11
+> E2E. The remaining gap to "production-ready" is the P1 band — shared-store
+> rate limiter, self-service password reset, MFA, observability, and
+> exhaustive authorization tests — not the integrity foundations.
+> The dimension table below is the ORIGINAL assessment, kept as the record
+> of what the audit found.
 
 | Dimension | Score | One-line justification |
 |---|---:|---|
@@ -159,7 +168,16 @@ Session strategy is `"jwt"` with **no explicit `maxAge`**, so Auth.js's 30-day d
 
 ---
 
-### 🟠 A-03 (P0/P1 boundary) — Submission has a check-then-act race window
+### ✅ A-03 (P0/P1 boundary) — Submission has a check-then-act race window — **FIXED 2026-08-26**
+
+> **Resolved.** `finalizeAttempt()` now claims the status transition with a
+> conditional `updateMany` and treats an affected-count of 0 as "already
+> finalized", so concurrent submits produce exactly one Submission row.
+> Covered by the concurrent-submit test in `attempt-expiry.test.ts`. The
+> client-supplied idempotency key the fix shape also suggested was NOT
+> added — the atomic claim alone retires the duplicate-submission risk, and
+> an idempotency key is only needed once retries are client-driven (P2-2).
+> Original finding preserved below.
 
 `submitAttempt` reads the attempt, checks `status === "IN_PROGRESS"` in application code, then writes inside a transaction. There is no atomic guard — no `updateMany({ where: { status: "IN_PROGRESS" } })` gate, no optimistic-concurrency version column, no idempotency key.
 
@@ -227,7 +245,11 @@ Note for whoever builds it: the reset flow must not disclose whether an email ex
 
 ---
 
-### 🟡 A-08 (P1) — Documentation has drifted from reality
+### ✅ A-08 (P1) — Documentation has drifted from reality — **FIXED 2026-08-26**
+
+> **Resolved.** `PROJECT_STATUS.md` is now a thin pointer to the canonical
+> docs rather than a competing narrative, and `ExamCountdown.tsx`'s false
+> docstring was corrected as part of A-01. Original finding preserved below.
 
 `PROJECT_STATUS.md` is materially out of date and would mislead a reviewer, an auditor, or a buyer:
 
